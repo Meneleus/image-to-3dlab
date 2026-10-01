@@ -114,7 +114,7 @@ def _i2l_sanitize_std_flags(flags):
             gnu_std = "-std=c++20"
             i += 1
             continue
-        if f.startswith("-Xcompiler=/std:") or f.startswith("-Xcompiler,/std:"):
+        if f.startswith(("-Xcompiler=/std:", "-Xcompiler,/std:")):
             xcomp_std = "-Xcompiler=/std:c++20"
             i += 1
             continue
@@ -302,7 +302,7 @@ def sanitize_std_flags(flags: list) -> list:
             gnu_std = "-std=c++20"
             i += 1
             continue
-        if f.startswith("-Xcompiler=/std:") or f.startswith("-Xcompiler,/std:"):
+        if f.startswith(("-Xcompiler=/std:", "-Xcompiler,/std:")):
             xcomp_std = "-Xcompiler=/std:c++20"
             i += 1
             continue
@@ -441,11 +441,13 @@ def _inject_msvc_cccl_source_flags(text: str) -> str:
     The runtime hook always appends these too; this makes them visible in the file
     and covers packages whose Windows branch only lists warning suppressions.
     """
-    if all(f'"{flag}"' in text or f"'{flag}'" in text for flag in WIN_MSVC_CXX_FLAGS):
-        if all(
+    if (
+        all(f'"{flag}"' in text or f"'{flag}'" in text for flag in WIN_MSVC_CXX_FLAGS)
+        and all(
             f'"{flag}"' in text or f"'{flag}'" in text for flag in WIN_MSVC_NVCC_FLAGS
-        ):
-            return text
+        )
+    ):
+        return text
 
     # nvdiffrast: Windows warning suppressions list — append CCCL cxx flags.
     old_nvd = '["/wd4067", "/wd4624", "/wd4996"]'
@@ -692,8 +694,8 @@ def install_basic(py: Path) -> None:
     uv = shutil.which("uv")
     run([uv, "pip", "install", "--python", str(py), *BASIC])
     run([uv, "pip", "install", "--python", str(py),
-         "git+https://github.com/EasternJournalist/utils3d.git"
-         "@9a4eb15e4021b67b12c460c7057d642626897ec8"])
+         ("git+https://github.com/EasternJournalist/utils3d.git"
+          "@9a4eb15e4021b67b12c460c7057d642626897ec8")])
 
 
 def install_extension(py: Path, name: str, url: str, ref: str | None,
@@ -746,8 +748,30 @@ def install_extensions(py: Path) -> None:
 
 
 def try_flash_attn(py: Path) -> None:
+    """Best-effort flash-attn build. Soft-fails to SDPA on any install error.
+
+    flash-attn 2.7.3 imports ``psutil`` at build time but does not declare it as a
+    build dependency. We install with ``--no-build-isolation`` (needs the venv's
+    torch for CUDA), so ``psutil`` must already be in the TRELLIS venv.
+
+    For uv project-managed builds elsewhere, the equivalent is::
+
+        [tool.uv.extra-build-dependencies]
+        flash-attn = ["psutil"]
+
+    This bootstrap owns the Windows path; there is no lab pyproject for TRELLIS.
+    """
     uv = shutil.which("uv")
     print("\nTrying flash-attn (optional; SDPA works if this fails)...", flush=True)
+    # Build dep for flash-attn egg_info / setup under --no-build-isolation.
+    psutil = subprocess.run(
+        [uv, "pip", "install", "--python", str(py), "psutil"],
+        check=False,
+    )
+    if psutil.returncode != 0:
+        print("Could not install psutil (needed to build flash-attn); "
+              "generate will use ATTN_BACKEND=sdpa.", flush=True)
+        return
     done = subprocess.run(
         [uv, "pip", "install", "--python", str(py), "flash-attn==2.7.3",
          "--no-build-isolation"],

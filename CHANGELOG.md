@@ -43,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `flexible_dual_grid.cpp` (C3688 — not a patch over-match), and cast `size_t`
   neighbours into `int4` brace-inits (C4838). Idempotent; refuses to leave `…d`
   float literals behind.
+- **TRELLIS CUDA bootstrap:** install `psutil` into the TRELLIS venv before the
+  optional `flash-attn==2.7.3` build (`--no-build-isolation`). flash-attn needs
+  it at build time but does not declare it; without this Windows hits
+  `ModuleNotFoundError: psutil`. Still soft-fails to SDPA if the extension
+  itself fails to compile.
 
 ## [0.3.6] - 2026-10-01
 

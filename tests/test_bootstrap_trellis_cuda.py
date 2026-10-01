@@ -7,7 +7,6 @@ import io
 import bootstrap_trellis_cuda as boot
 import pytest
 
-
 FLEXGEMM_SETUP = '''\
 from setuptools import setup
 import platform
@@ -319,3 +318,58 @@ def test_patch_torch_cpp_extension_cxx20(monkeypatch, tmp_path):
     assert "c++17" not in text
     assert "-std=c++20" in text and "/std:c++20" in text
     assert boot.patch_torch_cpp_extension_cxx20(py) is False
+
+
+def test_try_flash_attn_installs_psutil_before_flash_attn(monkeypatch, tmp_path):
+    """flash-attn@2.7.3 needs psutil at build time under --no-build-isolation."""
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+
+        class R:
+            returncode = 0
+
+        return R()
+
+    monkeypatch.setattr(boot.shutil, "which", lambda _n: "/usr/bin/uv")
+    monkeypatch.setattr(boot.subprocess, "run", fake_run)
+    monkeypatch.setattr(boot, "extension_build_env", lambda: {"PATH": "/x"})
+    boot.try_flash_attn(tmp_path / "python")
+
+    assert len(calls) >= 2
+    assert "psutil" in calls[0]
+    assert any("flash-attn==2.7.3" in part for part in calls[1])
+    assert "--no-build-isolation" in calls[1]
+    # Must not abort the bootstrap on flash-attn failure path either.
+    assert calls[0].index("psutil") > 0
+
+
+def test_try_flash_attn_soft_fails_when_build_fails(monkeypatch, tmp_path, capsys):
+    def fake_run(cmd, **kwargs):
+        class R:
+            returncode = 0 if "psutil" in cmd else 1
+
+        return R()
+
+    monkeypatch.setattr(boot.shutil, "which", lambda _n: "/usr/bin/uv")
+    monkeypatch.setattr(boot.subprocess, "run", fake_run)
+    monkeypatch.setattr(boot, "extension_build_env", dict)
+    boot.try_flash_attn(tmp_path / "python")  # must not raise
+    out = capsys.readouterr().out.lower()
+    assert "sdpa" in out
+    assert "flash-attn not installed" in out
+
+
+def test_try_flash_attn_soft_fails_when_psutil_missing(monkeypatch, tmp_path, capsys):
+    def fake_run(cmd, **kwargs):
+        class R:
+            returncode = 1
+
+        return R()
+
+    monkeypatch.setattr(boot.shutil, "which", lambda _n: "/usr/bin/uv")
+    monkeypatch.setattr(boot.subprocess, "run", fake_run)
+    boot.try_flash_attn(tmp_path / "python")
+    out = capsys.readouterr().out.lower()
+    assert "psutil" in out and "sdpa" in out
