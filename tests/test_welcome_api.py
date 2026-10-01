@@ -93,8 +93,8 @@ def test_payload_names_this_machine_and_its_routes(monkeypatch):
     assert data["brand"]["name"] == "Bingeljell's Image-to-3D Lab"
     assert data["host"]["id"] == "nvidia"
     runs_here = {r["id"] for r in data["routes"]}
-    assert {"pixal3d", "sf3d", "qwen-image"} <= runs_here
-    assert "trellis" not in runs_here  # Mac-only for now
+    assert {"pixal3d", "sf3d", "qwen-image", "trellis", "hunyuan_xiong"} <= runs_here
+    assert "hunyuan-mlx" not in runs_here  # dgrauet MLX pairing stays Mac-only
     assert [r["version"] for r in data["news"]] == ["0.3.0"]
 
 

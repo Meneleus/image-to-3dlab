@@ -11,8 +11,18 @@ def test_windows_guide_exists_and_names_the_working_routes():
     text = (REPO / "docs" / "WINDOWS.md").read_text()
     for needle in ("Pixal3D", "Stable Fast 3D", "TRELLIS.2", "Hunyuan3D",
                    "Visual Studio Build Tools", "install.ps1", "575",
-                   "microsoft/TRELLIS.2", "Hunyuan3D-2.1"):
+                   "bootstrap_trellis_cuda", "bootstrap_hunyuan_cuda",
+                   "vendor/trellis2-cuda", "vendor/hunyuan3d-cuda"):
         assert needle in text, needle
+    # In-lab, not "go use another repo forever".
+    assert "first-class" in text or "in the lab" in text.lower()
+
+
+def test_powershell_cuda_wrappers_exist():
+    for name in ("bootstrap_trellis_cuda.ps1", "bootstrap_hunyuan_cuda.ps1"):
+        text = (REPO / "scripts" / name).read_text()
+        assert name.replace(".ps1", ".py") in text
+
 
 
 def test_readme_points_at_the_windows_guide():

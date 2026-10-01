@@ -66,16 +66,16 @@ Five backends, one Generate 3D page. Sadly life is full of trade-offs, so pick t
 | Backend | Best for | Runs on | Setup | License |
 |---|---|---|---|---|
 | **Pixal3D (C++/GGML)** ⭐ | Best results we have; one pass, no repaint needed | Mac, NVIDIA (Linux/Windows) | Setup & Status, or `scripts/bootstrap_pixal3d.py` (8.4 GB weights) | MIT (code + flow weights); DINOv3 License (bundled encoder) |
-| **Hunyuan3D-MLX (Xiong, full pipeline)** | Fast, clean results | Mac (NVIDIA: [official Hunyuan3D-2.1](https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1)) | Code is in this repo; weights download separately | MIT (code); Tencent Community License (weights) |
-| **Hunyuan3D-MLX (dgrauet shape + Xiong paint)** | The cleanest shapes, at the cost of manual setup | Mac (NVIDIA: [official Hunyuan3D-2.1](https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1)) | Cloned separately, manual | Tencent Community License (code + weights) |
-| **TRELLIS.2** | Highest fidelity, closest to the official demo | Mac (NVIDIA: [official TRELLIS.2](https://github.com/microsoft/TRELLIS.2)) | Setup & Status (~1h) | MIT + DINOv3 License |
+| **Hunyuan3D** | Fast, clean results | Mac (MLX) and NVIDIA (CUDA, in-lab) | Mac: `hunyuan_mlx/`; NVIDIA: `scripts/bootstrap_hunyuan_cuda.py` | MIT (MLX code) / Tencent license (CUDA code + all weights) |
+| **Hunyuan3D-MLX (dgrauet shape + Xiong paint)** | The cleanest shapes, at the cost of manual setup | Mac only | Cloned separately, manual | Tencent Community License (code + weights) |
+| **TRELLIS.2** | Highest fidelity, closest to the official demo | Mac (Metal port) and NVIDIA (CUDA, in-lab) | Mac: Setup & Status; NVIDIA: `scripts/bootstrap_trellis_cuda.py` | MIT + DINOv3 License |
 | **Stable Fast 3D** | Fastest, lower fidelity | Mac, NVIDIA (Linux/Windows) | Setup & Status, or `scripts/bootstrap_sf3d.py` (gated weights; Windows needs VS Build Tools) | Stability AI Community License |
 
 ⭐ Start with **Pixal3D**. It keeps flat, saturated colours in a single pass, where
 TRELLIS.2 often needs a separate repaint.
 
-TRELLIS.2 and Hunyuan3D are built for NVIDIA upstream; this lab wraps their Apple Silicon
-ports. On an NVIDIA machine, use the official repos linked above for those two for now.
+On NVIDIA, TRELLIS.2 and Hunyuan3D-2.1 install into `vendor/` and run through the same
+Generate 3D tab and CLI as the Mac ports (see [`docs/WINDOWS.md`](docs/WINDOWS.md)).
 
 <p align="center">
   <img src="docs/images/turntable-pixal3d-warrior.webp" width="360"
@@ -121,21 +121,19 @@ status telling you exactly what's missing:
   run `hf auth login`, then set it up from Setup & Status or run
   `python scripts/bootstrap_sf3d.py`. On Windows you also need the Visual Studio C++ build
   tools (see [`docs/WINDOWS.md`](docs/WINDOWS.md)).
-- **TRELLIS.2**: Apple Silicon only in this lab (Metal port). On NVIDIA, use
-  [microsoft/TRELLIS.2](https://github.com/microsoft/TRELLIS.2). On a Mac: click
-  **Run setup** (bootstraps the Metal port, ~1h, needs `uv`,
-  Python 3.11 and Xcode command-line tools), or run it manually:
-  `python scripts/bootstrap_trellis_space_macos.py`. First run downloads the ~14 GB
-  TRELLIS.2-4B weights automatically. **Before that:** its DINOv3 image encoder is gated.
-  Request access at
+- **TRELLIS.2**:
+  - **Mac:** **Run setup** (Metal port, ~1h) or `python scripts/bootstrap_trellis_space_macos.py`.
+  - **NVIDIA:** Setup & Status or `python scripts/bootstrap_trellis_cuda.py` (clones
+    official microsoft/TRELLIS.2 into `vendor/trellis2-cuda`; needs CUDA toolkit, and on
+    Windows VS C++ build tools).
+  First Generate run downloads ~14 GB. **Before that:** request gated DINOv3 access at
   [huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m](https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m)
-  (Meta approves by hand, so do it first) and run `hf auth login`, or the first run stops
-  after the big download. Selecting an image also runs an optional local
-  TinyCLIP style advisory; its small checkpoint downloads on first use and never blocks
-  generation.
-- **Hunyuan3D-MLX (dgrauet shape + Xiong paint)**: Apple Silicon / MLX only. On NVIDIA, use
-  [official Hunyuan3D-2.1](https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1). No automated
-  setup yet on Mac; expect to read `scripts/hunyuan_mlx_generate.py` to set it up by hand.
+  and run `hf auth login`.
+- **Hunyuan3D (shape + paint)**:
+  - **Mac (MLX):** code in `hunyuan_mlx/`; `uv sync` + `download_weights.py`.
+  - **NVIDIA (CUDA):** Setup & Status or `python scripts/bootstrap_hunyuan_cuda.py`
+    (official Hunyuan3D-2.1 into `vendor/hunyuan3d-cuda`, ~10 GB weights after confirm).
+- **Hunyuan3D-MLX (dgrauet shape + Xiong paint)**: Apple Silicon only; manual vendor clone.
 
 Then drop a **pre-masked PNG** (transparent background), pick your settings, hit
 **Generate**. Progress streams live; the GLB lands in `output/`. You can also **Compare**
@@ -262,8 +260,8 @@ cloud GPU. Yours will differ with the machine and the picture.
 |---|---|---|
 | Text to image (Qwen-Image) | ~4.5 min | ~20 s |
 | Image to 3D (Pixal3D) | ~6 min | ~3 min |
-| Image to 3D (Hunyuan3D-MLX) | ~9 min | Mac only (use [upstream](https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1) on NVIDIA) |
-| Image to 3D (TRELLIS.2) | 15–35 min | Mac only (use [upstream](https://github.com/microsoft/TRELLIS.2) on NVIDIA) |
+| Image to 3D (Hunyuan3D) | ~9 min (MLX) | CUDA in-lab (`bootstrap_hunyuan_cuda.py`) |
+| Image to 3D (TRELLIS.2) | 15–35 min (Metal) | CUDA in-lab (`bootstrap_trellis_cuda.py`) |
 
 On a Mac, TRELLIS.2 runs about twice as fast with **Attention backend** set to `mlx`.
 

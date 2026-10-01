@@ -12,12 +12,13 @@ route.
 | **Pixal3D** | Yes | Downloads a CUDA 12 prebuilt (driver **575+**). No Visual Studio needed. |
 | **Generate Image** (Qwen-Image) | Yes | Prebuilt CUDA `sd-cli`; CUDA runtime is bundled. |
 | **Stable Fast 3D** | Yes | Needs **Visual Studio Build Tools** (C++) to compile the texture baker. |
+| **TRELLIS.2** | Yes (CUDA) | `scripts/bootstrap_trellis_cuda.py` clones official microsoft/TRELLIS.2 into `vendor/trellis2-cuda`. Needs CUDA toolkit + VS C++ tools. Microsoft only documents Linux; Windows is best-effort. |
+| **Hunyuan3D-2.1** | Yes (CUDA) | `scripts/bootstrap_hunyuan_cuda.py` clones official Tencent Hunyuan3D-2.1 into `vendor/hunyuan3d-cuda`. Officially supports Windows. |
+| **Hunyuan3D-MLX (dgrauet)** | No | Apple MLX only. Prefer the CUDA Hunyuan route above. |
 | **Finish** (retopo, Pixel Match, compress) | Yes | Needs **Blender 4.2+**. Repaint of sides/back is Mac-only (MLX). |
-| **TRELLIS.2** | No (Mac port only) | Use [microsoft/TRELLIS.2](https://github.com/microsoft/TRELLIS.2) on CUDA. |
-| **Hunyuan3D-MLX** | No (Apple MLX only) | Use [Tencent Hunyuan3D-2.1](https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1) on CUDA. |
 
 Shell scripts named `*_macos.sh` are Apple Silicon only. On Windows use the Python
-bootstraps (`scripts/bootstrap_*.py`) or the viewer’s **Setup & Status** page.
+bootstraps (`scripts/bootstrap_*.py`), the PowerShell wrappers, or **Setup & Status**.
 
 ## Prerequisites
 
@@ -27,13 +28,10 @@ bootstraps (`scripts/bootstrap_*.py`) or the viewer’s **Setup & Status** page.
    - Pixal3D’s prebuilt needs **CUDA 12.9+** (driver **575** or newer)
 3. **git** — [git-scm.com/download/win](https://git-scm.com/download/win)
 4. **Blender 4.2+** (for Finish) — [blender.org/download](https://www.blender.org/download/)
-5. **Optional, for SF3D only:** [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
-   with the **Desktop development with C++** workload. Not needed for Pixal3D or
-   Generate Image.
-6. **Optional:** a CUDA Toolkit matching your PyTorch major version, if you want SF3D’s
-   CUDA texture baker instead of its CPU baker. The model still runs on the GPU either way.
-
-You do **not** need Homebrew, Xcode, Metal, or MLX.
+5. **For SF3D, TRELLIS.2, or Hunyuan3D:** [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+   with the **Desktop development with C++** workload, plus a **CUDA Toolkit** whose
+   major version matches the PyTorch build (`python -m image_to_3dlab.host torch-index`).
+6. **Not needed:** Homebrew, Xcode, Metal, or MLX.
 
 ## Install (one line)
 
@@ -79,20 +77,68 @@ cd $env:USERPROFILE\image-to-3dlab   # or your I3D_DIR
 Open the URL it prints. Go to **Setup & Status**, pick a backend, read the size and
 licence, then confirm. Weights only download after you say yes.
 
-## CLI (same engines)
+## Setting up TRELLIS.2 and Hunyuan3D in the lab
+
+These are first-class Generate 3D backends on Windows/Linux NVIDIA — same dropdown and
+CLI pattern as on Mac, different vendor tree under the hood.
+
+### TRELLIS.2 (CUDA)
+
+```powershell
+.venv\Scripts\python.exe scripts\bootstrap_trellis_cuda.py
+# or: .\scripts\bootstrap_trellis_cuda.ps1
+```
+
+What it does: clones `microsoft/TRELLIS.2` → `vendor/trellis2-cuda/`, installs CUDA
+PyTorch + deps, compiles nvdiffrast / cumesh / flexgemm / o-voxel. **No weights yet.**
+
+Then in the viewer pick **TRELLIS.2** → Generate. First run downloads ~14 GB
+(`microsoft/TRELLIS.2-4B`). Before that: request gated DINOv3 access and run
+`hf auth login`.
+
+CLI:
+
+```powershell
+vendor\trellis2-cuda\.venv\Scripts\python.exe scripts\trellis_cuda_generate.py `
+  input.png output\out.glb --resolution 1024 --seed 0
+```
+
+### Hunyuan3D-2.1 (CUDA)
+
+```powershell
+.venv\Scripts\python.exe scripts\bootstrap_hunyuan_cuda.py
+# or: .\scripts\bootstrap_hunyuan_cuda.ps1
+```
+
+What it does: clones `Tencent-Hunyuan/Hunyuan3D-2.1` → `vendor/hunyuan3d-cuda/`, builds
+the paint rasterizer, fetches ~10 GB weights (asks first unless `--yes`).
+
+**Licence:** Tencent Community License — not for EU / UK / South Korea.
+
+CLI:
+
+```powershell
+vendor\hunyuan3d-cuda\.venv\Scripts\python.exe scripts\hunyuan_cuda_generate.py `
+  input.png output\out.glb --model 2.1
+```
+
+In the viewer this is the **Hunyuan3D (shape + paint)** dropdown entry (same id as the
+Mac MLX Xiong route; the lab picks CUDA automatically on NVIDIA).
+
+## CLI (quick routes)
 
 ```powershell
 # Pixal3D
 .venv\Scripts\python.exe scripts\bootstrap_pixal3d.py
 .venv\Scripts\python.exe scripts\pixal3d_generate.py input.png output.glb --seed 42
 
-# Generate Image weights + binary
+# Generate Image
 .venv\Scripts\python.exe scripts\bootstrap_qwen_image.py
 
-# Stable Fast 3D (needs VS Build Tools for the C++ extensions)
+# Stable Fast 3D
 .venv\Scripts\python.exe scripts\bootstrap_sf3d.py
 
-# Finish (needs Blender on PATH or in Program Files)
+# Finish (needs Blender)
 .venv\Scripts\python.exe scripts\retopo_repaint.py generated.glb source.png finished.glb --faces 40000 --skip-paint
 ```
 
@@ -102,39 +148,22 @@ If Blender is installed somewhere unusual:
 $env:I2L_BLENDER = "C:\Path\To\blender.exe"
 ```
 
-## Mac-only routes: what to use instead
-
-**TRELLIS.2** and **Hunyuan3D** in this repo are Apple Silicon ports (Metal / MLX). Setup
-& Status will say they are not available on this machine and point at the official NVIDIA
-repos. That is intentional: downloading Mac-only weights here would waste disk and then
-fail.
-
-| Want | On Windows use |
-|---|---|
-| TRELLIS.2 | [microsoft/TRELLIS.2](https://github.com/microsoft/TRELLIS.2) |
-| Hunyuan3D | [Tencent-Hunyuan/Hunyuan3D-2.1](https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1) |
-| Fast textured mesh in *this* lab | **Pixal3D** (recommended start) |
-| Quick lower-fidelity mesh | **Stable Fast 3D** |
-
 ## Common snags
 
 | Symptom | Fix |
 |---|---|
 | Installer says no NVIDIA GPU | Install/update the NVIDIA driver; reopen PowerShell; `nvidia-smi` must work. |
-| PyTorch stays on CPU | Re-run the installer (it replaces a CPU-only torch), or install from the URL `python -m image_to_3dlab.host torch-index` prints. Driver must support CUDA 12.8+. |
-| Pixal3D refuses the prebuilt | Update the driver to **575+** (CUDA 12.9). |
-| SF3D compile fails | Install Visual Studio Build Tools with C++, then run `bootstrap_sf3d.py` again. |
+| PyTorch stays on CPU | Re-run the installer, or install from the URL `python -m image_to_3dlab.host torch-index` prints. |
+| Pixal3D refuses the prebuilt | Update the driver to **575+**. |
+| TRELLIS/Hunyuan/SF3D compile fails | Install VS Build Tools (C++) + a CUDA toolkit matching PyTorch; reopen the “x64 Native Tools” shell and re-run the bootstrap. |
+| TRELLIS fails only on Windows | Microsoft tests Linux; try the same bootstrap on Linux NVIDIA, or WSL2 with GPU. |
 | Generate Image is very slow / CPU | `nvidia-smi` must see the card; update the driver and reopen the terminal. |
 | Finish cannot find Blender | Install from blender.org, or set `I2L_BLENDER`. |
-| Paths with spaces | Quote them: `cd "D:\My Lab"`. |
 
 ## What we do not do for you
 
-- We never download model weights until you confirm in Setup & Status (or pass `--yes` on
-  a bootstrap).
+- We never download model weights until you confirm in Setup & Status (or pass `--yes`).
 - We never install GPU drivers, the CUDA Toolkit, Visual Studio, or Blender.
-- We do not ship TRELLIS/Hunyuan CUDA builds inside this lab yet; use the upstream repos
-  linked above.
 
 Windows support is real but still lightly tested. If something breaks, please say so in
 Discussions or an issue — include your GPU, driver version (`nvidia-smi`), and the exact

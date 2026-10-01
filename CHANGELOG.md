@@ -9,14 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **[`docs/WINDOWS.md`](docs/WINDOWS.md):** Windows + NVIDIA setup from a fresh clone —
-  driver floors, Blender, Visual Studio Build Tools for SF3D, and clear pointers to the
-  official CUDA repos for TRELLIS.2 and Hunyuan3D (Mac-port-only in this lab).
+  driver floors, Blender, Visual Studio Build Tools, and in-lab CUDA setup for TRELLIS.2
+  and Hunyuan3D-2.1.
+- **TRELLIS.2 CUDA in the lab** on Linux/Windows NVIDIA: `scripts/bootstrap_trellis_cuda.py`
+  + `scripts/trellis_cuda_generate.py`, wired into Setup & Status / Generate 3D / CLI
+  (same `trellis` backend id as the Mac Metal port).
+- **Hunyuan3D-2.1 CUDA in the lab** on Linux/Windows NVIDIA: `scripts/bootstrap_hunyuan_cuda.py`
+  + `scripts/hunyuan_cuda_generate.py`, wired into the existing Hunyuan Generate entry.
 - **Stable Fast 3D on Windows NVIDIA.** Same installer as Linux: compiles the texture baker
   with CUDA when `nvcc` matches PyTorch, otherwise its CPU baker. Needs the Visual Studio
   C++ build tools; the announcement says so before compiling.
+- PowerShell wrappers for Pixal3D, SF3D, TRELLIS CUDA and Hunyuan CUDA bootstraps.
 
 ### Changed
 - README and the About page now name Windows alongside Linux for NVIDIA routes.
+- TRELLIS.2 and Hunyuan are no longer “go use another repo” on NVIDIA: the viewer installs
+  and runs the official CUDA stacks under `vendor/`.
 - `find_nvcc` looks under `CUDA_PATH` and the usual Windows Toolkit folders, not only
   `/usr/local/cuda`.
 - Host memory detection works on Windows (used when capping compile job counts).

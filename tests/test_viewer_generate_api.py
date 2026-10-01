@@ -223,7 +223,7 @@ def test_trellis_input_advisor_runs_in_backend_environment(monkeypatch, tmp_path
     image = tmp_path / "input.png"
     for path in (interpreter, script, image):
         path.write_bytes(b"x")
-    monkeypatch.setattr(api, "PYTHON", interpreter)
+    monkeypatch.setattr(api.cuda_routes, "trellis_python", lambda *_a, **_k: interpreter)
     monkeypatch.setattr(api, "TINYCLIP_ADVISOR", script)
 
     class Result:
@@ -250,7 +250,7 @@ def test_trellis_input_advisor_rejects_malformed_output(monkeypatch, tmp_path):
     image = tmp_path / "input.png"
     for path in (interpreter, script, image):
         path.write_bytes(b"x")
-    monkeypatch.setattr(api, "PYTHON", interpreter)
+    monkeypatch.setattr(api.cuda_routes, "trellis_python", lambda *_a, **_k: interpreter)
     monkeypatch.setattr(api, "TINYCLIP_ADVISOR", script)
 
     class Result:
@@ -270,7 +270,8 @@ def test_setup_available_reports_missing_uv(monkeypatch):
 
 def test_setup_available_reports_missing_bootstrap(monkeypatch, tmp_path):
     monkeypatch.setattr(api.shutil, "which", lambda name: "/usr/bin/uv" if name == "uv" else None)
-    monkeypatch.setattr(api, "REPO", tmp_path)
+    missing = tmp_path / "no-bootstrap.py"
+    monkeypatch.setattr(api.cuda_routes, "trellis_bootstrap", lambda *_a, **_k: missing)
     ok, reason = api.setup_available()
     assert ok is False and "bootstrap" in reason
 
@@ -319,13 +320,9 @@ def test_setup_run_exposes_the_job_sse_contract():
 
 
 def test_clean_port_build_present(monkeypatch, tmp_path):
-    monkeypatch.setattr(api, "PYTHON", tmp_path / "no-such")
-    monkeypatch.setattr(api, "WRAPPER", tmp_path / "no-such")
+    monkeypatch.setattr(api.cuda_routes, "trellis_build_present", lambda *_a, **_k: False)
     assert api.clean_port_build_present() is False
-    p = tmp_path / "exists"
-    p.write_text("")
-    monkeypatch.setattr(api, "PYTHON", p)
-    monkeypatch.setattr(api, "WRAPPER", p)
+    monkeypatch.setattr(api.cuda_routes, "trellis_build_present", lambda *_a, **_k: True)
     assert api.clean_port_build_present() is True
 
 
