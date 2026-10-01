@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Fix MSVC C2398 narrowing in o-voxel torch shape brace-inits (size_t → int64_t).
+"""Fix MSVC build breaks in vendored o-voxel (narrowing + invalid `d` float suffixes).
 
-On Windows, `{N, C}` where N/C are `size_t` (or `vector::size()`) is a narrowing
-conversion into libtorch's `int64_t` dims. Cast explicitly so CUDA TRELLIS.2's
-vendored o-voxel builds under VS 2022/18.
+On Windows / VS 2022–18:
+
+* `{N, C}` with `size_t` into libtorch `int64_t` dims → C2398 (cast to int64_t).
+* Upstream `1e-6d` / `0.0d` are not MSVC double literals under C++20 → C3688
+  (`operator ""d` not found). Plain `1e-6` / `0.0` are already double.
+* `int4{i, neigh_indices[…]}` with `size_t` neighbours → C4838 (cast to int).
+
+Only exact anchors are replaced; re-running is idempotent.
 
     python scripts/patch_ovoxel_msvc_narrowing.py
     python scripts/patch_ovoxel_msvc_narrowing.py --root vendor/trellis2-cuda/o-voxel
@@ -13,10 +18,28 @@ vendored o-voxel builds under VS 2022/18.
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_ROOT = REPO / "vendor" / "trellis2-cuda" / "o-voxel"
+
+# Upstream GCC-style double suffixes MSVC rejects under C++20 (C3688).
+# Patched text must never invent these; we only strip known anchors.
+_BAD_DOUBLE_SUFFIX = re.compile(
+    r"(?<![\w.])(?:\d+\.\d+|\d+)(?:[eE][+-]?\d+)?d\b"
+)
+
+
+def _assert_no_invented_d_suffix(text: str, rel: str) -> None:
+    """Fail loudly if a patch left MSVC-invalid `…d` float literals behind."""
+    hits = _BAD_DOUBLE_SUFFIX.findall(text)
+    if hits:
+        raise RuntimeError(
+            f"{rel}: still has MSVC-invalid float suffix(es) {hits!r} "
+            "(would become C3688 / operator \"\"d)"
+        )
+
 
 # (relative path, old snippet, new snippet) — exact upstream text, idempotent via "new in file".
 REPLACEMENTS: tuple[tuple[str, str, str], ...] = (
@@ -50,6 +73,34 @@ REPLACEMENTS: tuple[tuple[str, str, str], ...] = (
         "torch::Tensor codes_tensor = torch::from_blob(codes.data(), {codes.size()}, torch::kInt32).clone();",
         "torch::Tensor codes_tensor = torch::from_blob(codes.data(), {static_cast<int64_t>(codes.size())}, torch::kInt32).clone();",
     ),
+    # --- flexible_dual_grid.cpp: MSVC rejects upstream `…d` float suffixes (C3688) ---
+    (
+        "src/convert/flexible_dual_grid.cpp",
+        "if (segment_length < 1e-6d) continue; // Skip degenerate edges (zero-length)",
+        "if (segment_length < 1e-6) continue; // Skip degenerate edges (zero-length)",
+    ),
+    (
+        "src/convert/flexible_dual_grid.cpp",
+        "if (dir[axis] == 0.0d) {",
+        "if (dir[axis] == 0.0) {",
+    ),
+    # --- flexible_dual_grid.cpp: size_t → int in int4 brace-init (C4838) ---
+    (
+        "src/convert/flexible_dual_grid.cpp",
+        "int4 quad_indices{i, neigh_indices[0], neigh_indices[2], neigh_indices[1]};",
+        "int4 quad_indices{i, static_cast<int>(neigh_indices[0]), static_cast<int>(neigh_indices[2]), static_cast<int>(neigh_indices[1])};",
+    ),
+    (
+        "src/convert/flexible_dual_grid.cpp",
+        "int4 quad_indices{i, neigh_indices[1], neigh_indices[5], neigh_indices[3]};",
+        "int4 quad_indices{i, static_cast<int>(neigh_indices[1]), static_cast<int>(neigh_indices[5]), static_cast<int>(neigh_indices[3])};",
+    ),
+    (
+        "src/convert/flexible_dual_grid.cpp",
+        "int4 quad_indices{i, neigh_indices[0], neigh_indices[4], neigh_indices[3]};",
+        "int4 quad_indices{i, static_cast<int>(neigh_indices[0]), static_cast<int>(neigh_indices[4]), static_cast<int>(neigh_indices[3])};",
+    ),
+    # --- flexible_dual_grid.cpp: torch from_blob shapes (C2398) ---
     (
         "src/convert/flexible_dual_grid.cpp",
         "torch::from_blob(voxels.data(), {int(voxels .size()), 3}, torch::kInt32).clone(),",
@@ -69,9 +120,16 @@ REPLACEMENTS: tuple[tuple[str, str, str], ...] = (
 
 
 def patch_source(source: str, old: str, new: str) -> tuple[str, bool]:
-    """Apply one replacement. Returns (text, changed). Idempotent if already patched."""
-    if new in source:
+    """Apply one replacement. Returns (text, changed). Idempotent if already patched.
+
+    Prefer the already-patched form when both could match as substrings of each
+    other (e.g. stripping a trailing ``d`` from a float literal).
+    """
+    if new in source and old not in source:
         return source, False
+    if new in source and old in source:
+        # Already partially patched elsewhere; still replace this exact old once.
+        return source.replace(old, new, 1), True
     if old not in source:
         raise RuntimeError(f"anchor missing for MSVC narrowing patch:\n  {old}")
     return source.replace(old, new, 1), True
@@ -94,6 +152,8 @@ def apply_to_tree(root: Path) -> list[str]:
         for old, new in pairs:
             text, changed = patch_source(text, old, new)
             changed_any = changed_any or changed
+        if rel.endswith("flexible_dual_grid.cpp"):
+            _assert_no_invented_d_suffix(text, rel)
         if changed_any:
             path.write_text(text, encoding="utf-8")
             states.append(f"PATCHED {path}")

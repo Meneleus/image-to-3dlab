@@ -37,9 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shared CCCL ensure hook, setup.py rewrites, torch `cpp_extension` patch, ninja/spawn
   sanitizer, `/std:` kept out of `CL`, stale `build/` wiped. Fixes a false nvdiffrast
   abort that mistook hook string literals for missing compile flags.
-- **`scripts/patch_ovoxel_msvc_narrowing.py`:** cast o-voxel `size_t` torch shapes to
-  `int64_t` so MSVC (VS 2022/18) stops with C2398; bootstrap applies it before building
-  `vendor/trellis2-cuda/o-voxel`.
+- **`scripts/patch_ovoxel_msvc_narrowing.py`:** MSVC o-voxel build fixes applied before
+  compiling `vendor/trellis2-cuda/o-voxel`: cast `size_t` torch shapes to `int64_t`
+  (C2398), strip upstream `1e-6d` / `0.0d` float suffixes in
+  `flexible_dual_grid.cpp` (C3688 — not a patch over-match), and cast `size_t`
+  neighbours into `int4` brace-inits (C4838). Idempotent; refuses to leave `…d`
+  float literals behind.
 
 ## [0.3.6] - 2026-10-01
 

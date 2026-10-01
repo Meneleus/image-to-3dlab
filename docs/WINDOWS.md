@@ -173,7 +173,7 @@ o-voxel** — every `setup.py` the bootstrap installs). On Windows that needs:
 | `setup.py` rewrite | Every extension: `c++17` → `c++20`; inject MSVC CCCL flags into known shapes (incl. nvdiffrast’s warning-only Windows list) |
 | Runtime hook | **Same hook for every package**: appends `/std:c++20` + `/Zc:preprocessor` to `cxx`/`nvcc`, sanitizes ninja/spawn so 17 and 20 never mix |
 | Torch patch | Rewrites `c++17` → `c++20` inside this venv’s `torch/utils/cpp_extension.py` (older wheels hardcode `-std=c++17` into ninja) |
-| o-voxel source | `scripts/patch_ovoxel_msvc_narrowing.py` casts `size_t` torch shapes to `int64_t` (MSVC C2398) |
+| o-voxel source | `scripts/patch_ovoxel_msvc_narrowing.py`: `size_t`→`int64_t` shapes (C2398), strip upstream `1e-6d`/`0.0d` (C3688), `size_t`→`int` in `int4` (C4838) |
 | Clean | Deletes `build/`, `*.egg-info`, `build.ninja` before `pip install` |
 
 The post-patch check requires the CCCL **ensure** hook (`_i2l_ensure_msvc_cccl_flags`), not
@@ -200,7 +200,7 @@ Clear stale builds: delete `vendor\trellis2-cuda\.i2l-build\FlexGEMM` (or at lea
 | TRELLIS/Hunyuan/SF3D compile fails | Install VS Build Tools (C++) + a CUDA toolkit matching PyTorch; reopen the “x64 Native Tools” shell and re-run the bootstrap. |
 | `D9025` flipping `/std:c++20` ↔ `/std:c++17` on FlexGEMM | Torch and/or `setup.py` still emit C++17, or a stale `build\` ninja file. Pull latest, delete `vendor\trellis2-cuda\.i2l-build\FlexGEMM`, unset any hand-set `CL`/`CXXFLAGS` `/std:`, re-run bootstrap. See [above](#cuda-extension-builds-trellis2). |
 | Bootstrap says nvdiffrast is missing `/Zc:preprocessor` after “Patched…” | Fixed: pull latest (CCCL ensure hook). Delete `vendor\trellis2-cuda\.i2l-build\nvdiffrast` and re-run. |
-| o-voxel MSVC `C2398` narrowing (`size_t` → `int64_t`) | Pull latest; bootstrap runs `patch_ovoxel_msvc_narrowing.py`. Wipe `vendor\trellis2-cuda\o-voxel\build` and re-run. |
+| o-voxel MSVC `C2398` / `C3688` (`…d` float suffix) / `C4838` | Pull latest; bootstrap runs `patch_ovoxel_msvc_narrowing.py`. Wipe `vendor\trellis2-cuda\o-voxel\build` and re-run. |
 | TRELLIS fails only on Windows | Microsoft tests Linux; try the same bootstrap on Linux NVIDIA, or WSL2 with GPU. |
 | Generate Image is very slow / CPU | `nvidia-smi` must see the card; update the driver and reopen the terminal. |
 | Finish cannot find Blender | Install from blender.org, or set `I2L_BLENDER`. |

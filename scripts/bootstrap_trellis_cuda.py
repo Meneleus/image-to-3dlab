@@ -609,7 +609,7 @@ def patch_torch_cpp_extension_cxx20(py: Path) -> bool:
 
 
 def patch_ovoxel_msvc_narrowing(o_voxel: Path) -> None:
-    """Cast size_t torch shapes to int64_t so MSVC accepts o-voxel (C2398)."""
+    """Apply MSVC o-voxel source fixes (C2398 / C3688 / C4838) before compile."""
     if host.os_family() != "windows":
         return
     script = REPO / "scripts" / "patch_ovoxel_msvc_narrowing.py"
