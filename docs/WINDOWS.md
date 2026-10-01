@@ -154,8 +154,8 @@ $env:I2L_BLENDER = "C:\Path\To\blender.exe"
 
 ## CUDA extension builds (TRELLIS.2)
 
-TRELLIS.2 compiles several CUDA packages (CuMesh, FlexGEMM, nvdiffrast, o-voxel). On
-Windows that needs:
+TRELLIS.2 compiles several CUDA packages (**nvdiffrast, nvdiffrec, CuMesh, FlexGEMM,
+o-voxel** — every `setup.py` the bootstrap installs). On Windows that needs:
 
 1. **CUDA Toolkit 12.8+** (13.x is fine) with `nvcc` on PATH or under the usual
    `NVIDIA GPU Computing Toolkit\CUDA\v*` folder.
@@ -170,10 +170,14 @@ Windows that needs:
 | Step | What it does |
 |---|---|
 | Env | `DISTUTILS_USE_SDK=1`, `CL`/`CXXFLAGS` = `/Zc:preprocessor /Zc:__cplusplus` only (no `/std:` in env) |
-| `setup.py` rewrite | Every `c++17` → `c++20`; add `/Zc:preprocessor`; inject a runtime hook |
+| `setup.py` rewrite | Every extension: `c++17` → `c++20`; inject MSVC CCCL flags into known shapes (incl. nvdiffrast’s warning-only Windows list) |
+| Runtime hook | **Same hook for every package**: appends `/std:c++20` + `/Zc:preprocessor` to `cxx`/`nvcc`, sanitizes ninja/spawn so 17 and 20 never mix |
 | Torch patch | Rewrites `c++17` → `c++20` inside this venv’s `torch/utils/cpp_extension.py` (older wheels hardcode `-std=c++17` into ninja) |
-| Runtime hook | Sanitizes ninja flag lists + `compiler.spawn` so a line never carries both 17 and 20 |
 | Clean | Deletes `build/`, `*.egg-info`, `build.ninja` before `pip install` |
+
+The post-patch check requires the CCCL **ensure** hook (`_i2l_ensure_msvc_cccl_flags`), not
+merely the string `/std:c++20` somewhere in the file — an older check mistook hook
+source literals for real compile flags and aborted nvdiffrast.
 
 **Gotcha (cl D9025):** several places inject `/std:` — FlexGEMM `setup.py`, older PyTorch
 ninja rules, and `CL` under nvcc `--use-local-env`. If **both** `/std:c++20` and
@@ -194,6 +198,7 @@ Clear stale builds: delete `vendor\trellis2-cuda\.i2l-build\FlexGEMM` (or at lea
 | Pixal3D refuses the prebuilt | Update the driver to **575+**. |
 | TRELLIS/Hunyuan/SF3D compile fails | Install VS Build Tools (C++) + a CUDA toolkit matching PyTorch; reopen the “x64 Native Tools” shell and re-run the bootstrap. |
 | `D9025` flipping `/std:c++20` ↔ `/std:c++17` on FlexGEMM | Torch and/or `setup.py` still emit C++17, or a stale `build\` ninja file. Pull latest, delete `vendor\trellis2-cuda\.i2l-build\FlexGEMM`, unset any hand-set `CL`/`CXXFLAGS` `/std:`, re-run bootstrap. See [above](#cuda-extension-builds-trellis2). |
+| Bootstrap says nvdiffrast is missing `/Zc:preprocessor` after “Patched…” | Fixed: pull latest (CCCL ensure hook). Delete `vendor\trellis2-cuda\.i2l-build\nvdiffrast` and re-run. |
 | TRELLIS fails only on Windows | Microsoft tests Linux; try the same bootstrap on Linux NVIDIA, or WSL2 with GPU. |
 | Generate Image is very slow / CPU | `nvidia-smi` must see the card; update the driver and reopen the terminal. |
 | Finish cannot find Blender | Install from blender.org, or set `I2L_BLENDER`. |

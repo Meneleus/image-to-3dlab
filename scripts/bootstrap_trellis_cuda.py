@@ -76,9 +76,20 @@ WIN_NVCC_FLAGS = (
 WIN_SETUP_MARKER = "# image-to-3dlab: windows cxx20 + Zc:preprocessor\n"
 WIN_HOOK_BEGIN = "# --- image-to-3dlab: force C++20 on cl/nvcc (begin) ---\n"
 WIN_HOOK_END = "# --- image-to-3dlab: force C++20 on cl/nvcc (end) ---\n"
+WIN_HOOK_ENSURE_NAME = "_i2l_ensure_msvc_cccl_flags"
 _CXX17_IN_SETUP = re.compile(r"c\+\+17", re.IGNORECASE)
 
-# Injected into each extension setup.py so torch's ninja writer cannot emit c++17.
+# Flags every CUDAExtension must get on Windows (CCCL + current PyTorch headers).
+WIN_MSVC_CXX_FLAGS = ("/std:c++20", "/Zc:preprocessor", "/Zc:__cplusplus")
+WIN_MSVC_NVCC_FLAGS = (
+    "-Xcompiler=/std:c++20",
+    "-Xcompiler=/Zc:preprocessor",
+    "-Xcompiler=/Zc:__cplusplus",
+)
+
+# Injected into *every* extension setup.py the bootstrap builds. Sanitizes c++17,
+# appends CCCL flags to cxx/nvcc lists (nvdiffrast/nvdiffrec have none upstream),
+# and strips mixed standards from ninja/spawn command lines.
 WIN_CXX20_HOOK = '''\
 # --- image-to-3dlab: force C++20 on cl/nvcc (begin) ---
 def _i2l_sanitize_std_flags(flags):
@@ -123,6 +134,37 @@ def _i2l_sanitize_std_flags(flags):
         result.append(xcomp_std)
     return result
 
+def _i2l_ensure_msvc_cccl_flags(extra_compile_args):
+    """Append /std:c++20 + /Zc:preprocessor to every CUDAExtension on Windows."""
+    cxx_need = ["/std:c++20", "/Zc:preprocessor", "/Zc:__cplusplus"]
+    nvcc_need = [
+        "-Xcompiler=/std:c++20",
+        "-Xcompiler=/Zc:preprocessor",
+        "-Xcompiler=/Zc:__cplusplus",
+    ]
+    if isinstance(extra_compile_args, dict):
+        cxx = _i2l_sanitize_std_flags(list(extra_compile_args.get("cxx") or []))
+        nvcc = _i2l_sanitize_std_flags(list(extra_compile_args.get("nvcc") or []))
+        for flag in cxx_need:
+            if flag not in cxx:
+                cxx.append(flag)
+        for flag in nvcc_need:
+            if flag not in nvcc:
+                nvcc.append(flag)
+        extra_compile_args["cxx"] = cxx
+        extra_compile_args["nvcc"] = nvcc
+        return extra_compile_args
+    if isinstance(extra_compile_args, (list, tuple)):
+        flags = _i2l_sanitize_std_flags(list(extra_compile_args))
+        for flag in cxx_need:
+            if flag not in flags:
+                flags.append(flag)
+        return flags
+    return {
+        "cxx": list(cxx_need),
+        "nvcc": list(nvcc_need),
+    }
+
 def _i2l_force_cxx20():
     try:
         import torch.utils.cpp_extension as _tce
@@ -143,11 +185,9 @@ def _i2l_force_cxx20():
     def build_extensions(self):
         for ext in self.extensions:
             eca = getattr(ext, "extra_compile_args", None)
-            if isinstance(eca, dict):
-                for key, val in list(eca.items()):
-                    eca[key] = _i2l_sanitize_std_flags(list(val) if val else [])
-            elif isinstance(eca, (list, tuple)):
-                ext.extra_compile_args = _i2l_sanitize_std_flags(list(eca))
+            ext.extra_compile_args = _i2l_ensure_msvc_cccl_flags(
+                dict(eca) if isinstance(eca, dict) else eca
+            )
         compiler = self.compiler
         if compiler is not None and not getattr(compiler, "_i2l_cxx20_wrapped", False):
             _spawn = compiler.spawn
@@ -211,15 +251,29 @@ def windows_cuda_build_env(base: dict[str, str] | None = None) -> dict[str, str]
     return env
 
 
+def setup_text_outside_hook(text: str) -> str:
+    """setup.py with our injected runtime hook removed (for validation / rewrites)."""
+    if WIN_HOOK_BEGIN in text and WIN_HOOK_END in text:
+        start = text.index(WIN_HOOK_BEGIN)
+        end = text.index(WIN_HOOK_END) + len(WIN_HOOK_END)
+        return text[:start] + text[end:]
+    return text
+
+
 def setup_still_has_cxx17(text: str) -> bool:
     """True if setup.py still names C++17 outside our injected hook comments."""
-    # Ignore the hook body (it mentions c++17 only as a string to replace).
-    scrubbed = text
-    if WIN_HOOK_BEGIN in scrubbed and WIN_HOOK_END in scrubbed:
-        start = scrubbed.index(WIN_HOOK_BEGIN)
-        end = scrubbed.index(WIN_HOOK_END) + len(WIN_HOOK_END)
-        scrubbed = scrubbed[:start] + scrubbed[end:]
-    return _CXX17_IN_SETUP.search(scrubbed) is not None
+    return _CXX17_IN_SETUP.search(setup_text_outside_hook(text)) is not None
+
+
+def setup_has_cccl_ensure_hook(text: str) -> bool:
+    """True when the runtime hook that appends CCCL flags to every extension is present."""
+    return (
+        WIN_HOOK_BEGIN in text
+        and WIN_HOOK_END in text
+        and WIN_HOOK_ENSURE_NAME in text
+        and "/Zc:preprocessor" in text
+        and "/std:c++20" in text
+    )
 
 
 def sanitize_std_flags(flags: list) -> list:
@@ -269,37 +323,40 @@ def sanitize_std_flags(flags: list) -> list:
     return result
 
 
-def rewrite_setup_cxx_flags(text: str) -> str:
-    """Replace every C++17 compile-flag spelling with C++20; add /Zc:preprocessor.
-
-    Pure string rewrite used on Windows before building FlexGEMM / CuMesh / o-voxel.
-    Must *replace* hardcoded c++17 — prepending c++20 via env loses (cl D9025).
-    """
-    # Replace concrete flag spellings first, then any leftover c++17 token.
-    text = text.replace("-Xcompiler=/std:c++17", "-Xcompiler=/std:c++20")
-    text = text.replace("/std:c++17", "/std:c++20")
-    text = text.replace("-std=c++17", "-std=c++20")
-    # Do not rewrite c++17 inside our hook (it is the sanitizer source).
-    if WIN_HOOK_BEGIN in text and WIN_HOOK_END in text:
-        start = text.index(WIN_HOOK_BEGIN)
-        end = text.index(WIN_HOOK_END) + len(WIN_HOOK_END)
-        head, hook, tail = text[:start], text[start:end], text[end:]
-        head = _CXX17_IN_SETUP.sub("c++20", head)
-        tail = _CXX17_IN_SETUP.sub("c++20", tail)
-        text = head + hook + tail
-    else:
-        text = _CXX17_IN_SETUP.sub("c++20", text)
-
-    text = _ensure_zc_preprocessor(text)
-    text = _rewrite_unix_only_args_for_msvc(text)
-    return text
+def ensure_msvc_cccl_flags(extra_compile_args: dict | list | None) -> dict | list:
+    """Append /std:c++20 + /Zc:preprocessor to CUDAExtension args (testable mirror of hook)."""
+    cxx_need = list(WIN_MSVC_CXX_FLAGS)
+    nvcc_need = list(WIN_MSVC_NVCC_FLAGS)
+    if isinstance(extra_compile_args, dict):
+        out = dict(extra_compile_args)
+        cxx = sanitize_std_flags(list(out.get("cxx") or []))
+        nvcc = sanitize_std_flags(list(out.get("nvcc") or []))
+        for flag in cxx_need:
+            if flag not in cxx:
+                cxx.append(flag)
+        for flag in nvcc_need:
+            if flag not in nvcc:
+                nvcc.append(flag)
+        out["cxx"] = cxx
+        out["nvcc"] = nvcc
+        return out
+    if isinstance(extra_compile_args, (list, tuple)):
+        flags = sanitize_std_flags(list(extra_compile_args))
+        for flag in cxx_need:
+            if flag not in flags:
+                flags.append(flag)
+        return flags
+    return {"cxx": cxx_need, "nvcc": nvcc_need}
 
 
 def inject_cxx20_runtime_hook(text: str) -> str:
-    """Ensure the torch ninja/spawn C++20 sanitizer is present in setup.py."""
-    if WIN_HOOK_BEGIN in text and WIN_HOOK_END in text:
+    """Ensure the CCCL/C++20 runtime hook is present (replace older hook revisions)."""
+    if setup_has_cccl_ensure_hook(text):
         return text
-    # Prefer right after a future import; else at the top.
+    if WIN_HOOK_BEGIN in text and WIN_HOOK_END in text:
+        start = text.index(WIN_HOOK_BEGIN)
+        end = text.index(WIN_HOOK_END) + len(WIN_HOOK_END)
+        return text[:start] + WIN_CXX20_HOOK + text[end:]
     future = "from __future__ import annotations\n"
     if future in text:
         return text.replace(future, future + "\n" + WIN_CXX20_HOOK + "\n", 1)
@@ -307,7 +364,11 @@ def inject_cxx20_runtime_hook(text: str) -> str:
 
 
 def _ensure_zc_preprocessor(text: str) -> str:
-    """Add /Zc:preprocessor on MSVC cxx and nvcc -Xcompiler lines when missing."""
+    """Add /Zc:preprocessor on MSVC cxx and nvcc -Xcompiler lines when missing.
+
+    Operates on the full text; callers should pass setup_text_outside_hook when the
+    runtime hook is already present so hook string literals are not mistaken for flags.
+    """
     if "/Zc:preprocessor" in text:
         return text
     if "/Zc:__cplusplus" in text:
@@ -328,7 +389,6 @@ def _ensure_zc_preprocessor(text: str) -> str:
             "'-Xcompiler=/Zc:__cplusplus', '-Xcompiler=/Zc:preprocessor'",
         )
         return text
-    # Windows cxx list present but no Zc flags yet (inject after /std:c++20).
     if '"/std:c++20"' in text:
         text = text.replace(
             '"/std:c++20"',
@@ -375,42 +435,131 @@ def _rewrite_unix_only_args_for_msvc(text: str) -> str:
     return text
 
 
-def patch_windows_extension_setup(setup_py: Path) -> bool:
-    """Rewrite extension setup.py: every c++17 → c++20, Zc flags, runtime hook.
+def _inject_msvc_cccl_source_flags(text: str) -> str:
+    """Add MSVC CCCL flags into known setup.py shapes that omit them (nvdiffrast, …).
 
-    Idempotent only when no c++17 remains and the hook is present. Returns True if
-    the file changed. No-op on non-Windows hosts.
+    The runtime hook always appends these too; this makes them visible in the file
+    and covers packages whose Windows branch only lists warning suppressions.
+    """
+    if all(f'"{flag}"' in text or f"'{flag}'" in text for flag in WIN_MSVC_CXX_FLAGS):
+        if all(
+            f'"{flag}"' in text or f"'{flag}'" in text for flag in WIN_MSVC_NVCC_FLAGS
+        ):
+            return text
+
+    # nvdiffrast: Windows warning suppressions list — append CCCL cxx flags.
+    old_nvd = '["/wd4067", "/wd4624", "/wd4996"]'
+    new_nvd = (
+        '["/wd4067", "/wd4624", "/wd4996", '
+        '"/std:c++20", "/Zc:preprocessor", "/Zc:__cplusplus"]'
+    )
+    if old_nvd in text and "/Zc:preprocessor" not in setup_text_outside_hook(text):
+        text = text.replace(old_nvd, new_nvd, 1)
+
+    # nvdiffrast nvcc list has no host std/Zc — extend it.
+    old_nvcc = '"nvcc": ["-DNVDR_TORCH", "-lineinfo"]'
+    new_nvcc = (
+        '"nvcc": ["-DNVDR_TORCH", "-lineinfo", '
+        '"-Xcompiler=/std:c++20", "-Xcompiler=/Zc:preprocessor", '
+        '"-Xcompiler=/Zc:__cplusplus"]'
+    )
+    if old_nvcc in text and "-Xcompiler=/Zc:preprocessor" not in setup_text_outside_hook(text):
+        text = text.replace(old_nvcc, new_nvcc, 1)
+
+    # nvdiffrec: bare c_flags / nvcc_flags — append on Windows.
+    marker = "# image-to-3dlab: msvc cccl flags for nvdiffrec\n"
+    if (
+        "c_flags = ['-DNVDR_TORCH']" in text
+        and marker not in text
+        and "/Zc:preprocessor" not in setup_text_outside_hook(text)
+    ):
+        text = text.replace(
+            "c_flags = ['-DNVDR_TORCH']\n"
+            "nvcc_flags = ['-DNVDR_TORCH']\n",
+            "c_flags = ['-DNVDR_TORCH']\n"
+            "nvcc_flags = ['-DNVDR_TORCH']\n"
+            + marker
+            + "if os.name == 'nt':\n"
+            "    c_flags += ['/std:c++20', '/Zc:preprocessor', '/Zc:__cplusplus']\n"
+            "    nvcc_flags += ['-Xcompiler=/std:c++20', '-Xcompiler=/Zc:preprocessor', "
+            "'-Xcompiler=/Zc:__cplusplus']\n",
+            1,
+        )
+    return text
+
+
+def rewrite_setup_cxx_flags(text: str) -> str:
+    """Replace every C++17 compile-flag spelling with C++20; add /Zc:preprocessor.
+
+    Pure string rewrite used on Windows before building every CUDA extension.
+    Must *replace* hardcoded c++17 — prepending c++20 via env loses (cl D9025).
+    """
+    hook = ""
+    body = text
+    if WIN_HOOK_BEGIN in text and WIN_HOOK_END in text:
+        start = text.index(WIN_HOOK_BEGIN)
+        end = text.index(WIN_HOOK_END) + len(WIN_HOOK_END)
+        hook, body = text[start:end], text[:start] + text[end:]
+
+    body = body.replace("-Xcompiler=/std:c++17", "-Xcompiler=/std:c++20")
+    body = body.replace("/std:c++17", "/std:c++20")
+    body = body.replace("-std=c++17", "-std=c++20")
+    body = _CXX17_IN_SETUP.sub("c++20", body)
+    body = _ensure_zc_preprocessor(body)
+    body = _rewrite_unix_only_args_for_msvc(body)
+    body = _inject_msvc_cccl_source_flags(body)
+
+    if hook:
+        return _rejoin_hook(body, hook)
+    return body
+
+
+def _rejoin_hook(body: str, hook: str) -> str:
+    """Put the runtime hook back near the top of setup.py after body rewrites."""
+    if WIN_HOOK_BEGIN in body:
+        return body
+    future = "from __future__ import annotations\n"
+    if future in body:
+        return body.replace(future, future + "\n" + hook + "\n", 1)
+    if body.startswith(WIN_SETUP_MARKER):
+        return WIN_SETUP_MARKER + hook + "\n" + body[len(WIN_SETUP_MARKER):]
+    return hook + "\n" + body
+
+
+def patch_windows_extension_setup(setup_py: Path) -> bool:
+    """Rewrite every extension setup.py: c++17→c++20, CCCL flags, runtime hook.
+
+    Used for nvdiffrast, nvdiffrec, CuMesh, FlexGEMM, and o-voxel. Idempotent when
+    the CCCL ensure hook is present and no c++17 remains outside it.
     """
     if host.os_family() != "windows":
         return False
     if not setup_py.is_file():
         return False
     text = setup_py.read_text(encoding="utf-8")
-    hook_ok = WIN_HOOK_BEGIN in text and WIN_HOOK_END in text
     if (
         not setup_still_has_cxx17(text)
         and WIN_SETUP_MARKER in text
-        and "/Zc:preprocessor" in text
-        and hook_ok
+        and setup_has_cccl_ensure_hook(text)
     ):
         return False
     original = text
     text = rewrite_setup_cxx_flags(text)
     text = inject_cxx20_runtime_hook(text)
-    if text == original and not setup_still_has_cxx17(text) and hook_ok:
-        return False
     if WIN_SETUP_MARKER not in text:
         text = WIN_SETUP_MARKER + text
+    if text == original:
+        return False
     setup_py.write_text(text, encoding="utf-8")
     print(f"Patched Windows CUDA flags in {setup_py}", flush=True)
     return True
 
 
 def ensure_windows_extension_setup(setup_py: Path) -> None:
-    """Patch setup.py on Windows and refuse to build if any c++17 remains.
+    """Patch setup.py on Windows and refuse to build until CCCL/C++20 is wired in.
 
-    FlexGEMM's hardcoded /std:c++17 and older torch ninja defaults both inject
-    C++17 onto the same cl line as C++20 (D9025). Pip must not run until clean.
+    Validates outside the hook body so `/std:c++20` string literals inside the
+    sanitizer cannot fake a pass (that was the nvdiffrast false failure).
     """
     if host.os_family() != "windows":
         return
@@ -424,17 +573,13 @@ def ensure_windows_extension_setup(setup_py: Path) -> None:
             "Refusing to build — later /std:c++17 would override C++20 (cl D9025) "
             "and break PyTorch headers. See docs/WINDOWS.md."
         )
-    if WIN_HOOK_BEGIN not in text:
+    if not setup_has_cccl_ensure_hook(text):
         raise SystemExit(
-            f"{setup_py} is missing the C++20 runtime hook that strips torch's "
-            "c++17 ninja flags. See docs/WINDOWS.md."
+            f"{setup_py} is missing the CCCL ensure hook "
+            f"({WIN_HOOK_ENSURE_NAME}) that appends /std:c++20 and "
+            "/Zc:preprocessor to every CUDAExtension. See docs/WINDOWS.md."
         )
-    if "/Zc:preprocessor" not in text and "/std:c++20" in text:
-        raise SystemExit(
-            f"{setup_py} is missing /Zc:preprocessor (required by CCCL on "
-            "CUDA 12.8+/13.x). See docs/WINDOWS.md."
-        )
-    print(f"Verified no c++17 in {setup_py}", flush=True)
+    print(f"Verified Windows CCCL/C++20 hook in {setup_py}", flush=True)
 
 
 def patch_torch_cpp_extension_cxx20(py: Path) -> bool:
