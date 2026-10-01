@@ -1155,7 +1155,7 @@ def _sf3d_readiness() -> dict[str, Any]:
             "present": present,
             "hint": None if present else (
                 f"SF3D checkout not found at {SF3D_REPO_DEFAULT} — "
-                "run scripts/bootstrap_macos.sh first."
+                "run scripts/bootstrap_sf3d.py first."
             ),
         },
         "weights": {},

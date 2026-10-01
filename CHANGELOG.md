@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **[`docs/WINDOWS.md`](docs/WINDOWS.md):** Windows + NVIDIA setup from a fresh clone —
+  driver floors, Blender, Visual Studio Build Tools for SF3D, and clear pointers to the
+  official CUDA repos for TRELLIS.2 and Hunyuan3D (Mac-port-only in this lab).
+- **Stable Fast 3D on Windows NVIDIA.** Same installer as Linux: compiles the texture baker
+  with CUDA when `nvcc` matches PyTorch, otherwise its CPU baker. Needs the Visual Studio
+  C++ build tools; the announcement says so before compiling.
+
+### Changed
+- README and the About page now name Windows alongside Linux for NVIDIA routes.
+- `find_nvcc` looks under `CUDA_PATH` and the usual Windows Toolkit folders, not only
+  `/usr/local/cuda`.
+- Host memory detection works on Windows (used when capping compile job counts).
+
+### Fixed
+- SF3D and viewer hints no longer tell Windows/Linux users to run the Mac-only
+  `bootstrap_macos.sh`.
+
 ## [0.3.6] - 2026-10-01
 
 ### Fixed

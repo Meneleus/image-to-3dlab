@@ -43,7 +43,7 @@ def _load_sf3d(repo: Path):
     repo = repo.expanduser().resolve()
     if not (repo / "sf3d" / "system.py").is_file():
         raise RuntimeError(
-            f"SF3D checkout not found at {repo}. Run scripts/bootstrap_macos.sh first, "
+            f"SF3D checkout not found at {repo}. Run scripts/bootstrap_sf3d.py first, "
             "or pass --sf3d-repo."
         )
     if str(repo) not in sys.path:

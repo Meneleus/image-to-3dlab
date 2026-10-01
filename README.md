@@ -3,7 +3,7 @@
 ![Three source images above the textured 3D models generated from them: a photoreal warrior bust, a stylised garden gnome, and a multi-object shoe-house diorama](docs/images/one-image-in-textured-model-out.jpg)
 
 **Turn a single image into a textured 3D model on your own machine (an Apple Silicon
-Mac, or Linux with an NVIDIA card), with a license-provenance record for every result.**
+Mac, or Linux/Windows with an NVIDIA card), with a license-provenance record for every result.**
 
 Apple Silicon deserves more love in the 3D and Imagen community. So this is an attempt at that. 
 
@@ -31,16 +31,19 @@ and more camera angles are next. [How Finish works](#finishing-an-asset).
 curl -fsSL https://raw.githubusercontent.com/Bingeljell/image-to-3dlab/main/install.sh | bash
 ```
 
-**Windows** (limited testing, more testers wanted: tell us how it goes):
+**Windows + NVIDIA** (limited testing, more testers wanted: tell us how it goes):
 ```powershell
 irm https://raw.githubusercontent.com/Bingeljell/image-to-3dlab/main/install.ps1 | iex
 ```
 
+Full Windows walkthrough (CUDA driver floor, Blender, which backends work, Mac-only
+alternatives): **[`docs/WINDOWS.md`](docs/WINDOWS.md)**.
+
 The installer is short, so [read it](install.sh) before you run it
 ([Windows version](install.ps1)). It checks your machine, installs the code and
-Python 3.11, and prints how to start the viewer. It downloads **no model weights**: you
-choose those in **Setup & Status**, which states each size and licence and asks first. To
-update, run the same line again.
+Python 3.11 (with CUDA PyTorch on NVIDIA Windows), and prints how to start the viewer. It
+downloads **no model weights**: you choose those in **Setup & Status**, which states each
+size and licence and asks first. To update, run the same line again.
 
 For scripts and agents: `curl -fsSL …/install.sh | bash -s -- --yes --dir ~/lab`
 (`--dry-run` shows what it would do).
@@ -62,11 +65,11 @@ Five backends, one Generate 3D page. Sadly life is full of trade-offs, so pick t
 
 | Backend | Best for | Runs on | Setup | License |
 |---|---|---|---|---|
-| **Pixal3D (C++/GGML)** ⭐ | Best results we have; one pass, no repaint needed | Mac, NVIDIA | Setup & Status, or `scripts/bootstrap_pixal3d.py` (8.4 GB weights) | MIT (code + flow weights); DINOv3 License (bundled encoder) |
+| **Pixal3D (C++/GGML)** ⭐ | Best results we have; one pass, no repaint needed | Mac, NVIDIA (Linux/Windows) | Setup & Status, or `scripts/bootstrap_pixal3d.py` (8.4 GB weights) | MIT (code + flow weights); DINOv3 License (bundled encoder) |
 | **Hunyuan3D-MLX (Xiong, full pipeline)** | Fast, clean results | Mac (NVIDIA: [official Hunyuan3D-2.1](https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1)) | Code is in this repo; weights download separately | MIT (code); Tencent Community License (weights) |
 | **Hunyuan3D-MLX (dgrauet shape + Xiong paint)** | The cleanest shapes, at the cost of manual setup | Mac (NVIDIA: [official Hunyuan3D-2.1](https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1)) | Cloned separately, manual | Tencent Community License (code + weights) |
 | **TRELLIS.2** | Highest fidelity, closest to the official demo | Mac (NVIDIA: [official TRELLIS.2](https://github.com/microsoft/TRELLIS.2)) | Setup & Status (~1h) | MIT + DINOv3 License |
-| **Stable Fast 3D** | Fastest, lower fidelity | Mac, NVIDIA (Linux) | Setup & Status, or `scripts/bootstrap_sf3d.py` (gated weights) | Stability AI Community License |
+| **Stable Fast 3D** | Fastest, lower fidelity | Mac, NVIDIA (Linux/Windows) | Setup & Status, or `scripts/bootstrap_sf3d.py` (gated weights; Windows needs VS Build Tools) | Stability AI Community License |
 
 ⭐ Start with **Pixal3D**. It keeps flat, saturated colours in a single pass, where
 TRELLIS.2 often needs a separate repaint.
@@ -110,13 +113,17 @@ status telling you exactly what's missing:
   `python scripts/bootstrap_pixal3d.py`. It says what it will download and asks first. On a
   Mac it compiles with Metal (needs full Xcode). On NVIDIA Linux with the CUDA toolkit it
   compiles for your card (a few minutes, once, and about twice as fast to run); otherwise
-  it fetches a ready-made CUDA build (driver 575+). It also installs BiRefNet-lite, the
-  background remover (224 MB), so thin and light-coloured parts survive the cut-out.
+  on Linux or Windows it fetches a ready-made CUDA build (driver 575+). It also installs
+  BiRefNet-lite, the background remover (224 MB), so thin and light-coloured parts survive
+  the cut-out.
 - **Stable Fast 3D**: accept Stability's licence at
   [huggingface.co/stabilityai/stable-fast-3d](https://huggingface.co/stabilityai/stable-fast-3d),
   run `hf auth login`, then set it up from Setup & Status or run
-  `python scripts/bootstrap_sf3d.py`.
-- **TRELLIS.2**: click **Run setup** (bootstraps the Metal port, ~1h, needs `uv`,
+  `python scripts/bootstrap_sf3d.py`. On Windows you also need the Visual Studio C++ build
+  tools (see [`docs/WINDOWS.md`](docs/WINDOWS.md)).
+- **TRELLIS.2**: Apple Silicon only in this lab (Metal port). On NVIDIA, use
+  [microsoft/TRELLIS.2](https://github.com/microsoft/TRELLIS.2). On a Mac: click
+  **Run setup** (bootstraps the Metal port, ~1h, needs `uv`,
   Python 3.11 and Xcode command-line tools), or run it manually:
   `python scripts/bootstrap_trellis_space_macos.py`. First run downloads the ~14 GB
   TRELLIS.2-4B weights automatically. **Before that:** its DINOv3 image encoder is gated.
@@ -126,8 +133,9 @@ status telling you exactly what's missing:
   after the big download. Selecting an image also runs an optional local
   TinyCLIP style advisory; its small checkpoint downloads on first use and never blocks
   generation.
-- **Hunyuan3D-MLX (dgrauet shape + Xiong paint)**: no automated setup yet; expect to read
-  `scripts/hunyuan_mlx_generate.py` to set it up by hand.
+- **Hunyuan3D-MLX (dgrauet shape + Xiong paint)**: Apple Silicon / MLX only. On NVIDIA, use
+  [official Hunyuan3D-2.1](https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1). No automated
+  setup yet on Mac; expect to read `scripts/hunyuan_mlx_generate.py` to set it up by hand.
 
 Then drop a **pre-masked PNG** (transparent background), pick your settings, hit
 **Generate**. Progress streams live; the GLB lands in `output/`. You can also **Compare**
@@ -145,7 +153,8 @@ A pre-matted RGBA image skips background removal entirely and keeps the cutout i
 whatever else you ran on it. Pixal3D runs at 1024, the only resolution its single-image
 mode supports. It takes 8 sampling steps by default, 15-30% faster than 12 with the same
 shape; pass `--steps 12` for a hero asset. The 8-step default needs a Pixal3D built from
-source (every Mac, and Linux with the CUDA toolkit); the prebuilt NVIDIA download runs 12.
+source (every Mac, and Linux with the CUDA toolkit); the prebuilt NVIDIA download (Linux
+and Windows) runs 12.
 
 **Hunyuan3D-MLX (Xiong, full pipeline):**
 ```bash
@@ -232,9 +241,10 @@ character with them.
 
 | Thing | Why |
 |---|---|
-| Apple Silicon Mac (M-series), 32 GB recommended | Every route |
-| **or** Linux with an NVIDIA card (24 GB VRAM tested; Pixal3D's authors run it on 16 GB) | Pixal3D, Stable Fast 3D, Generate Image |
+| Apple Silicon Mac (M-series), 32 GB recommended | Every route in this lab |
+| **or** Linux/Windows with an NVIDIA card (24 GB VRAM tested; Pixal3D's authors run it on 16 GB) | Pixal3D, Stable Fast 3D, Generate Image (see [`docs/WINDOWS.md`](docs/WINDOWS.md)) |
 | macOS: full Xcode | compiles the Metal kernels for Pixal3D and TRELLIS |
+| Windows: NVIDIA driver 575+ for Pixal3D's prebuilt; VS Build Tools (C++) for SF3D | see [`docs/WINDOWS.md`](docs/WINDOWS.md) |
 | Blender 4.2+ | Finish (low-poly clean-up, Pixel Match) and rigging. Install it yourself from [blender.org](https://www.blender.org/download/); Setup & Status shows whether it was found |
 | `uv` | builds the reproducible Python environments |
 | Python 3.11 (TRELLIS) / 3.12 (Hunyuan3D-MLX) | pinned by each backend's own setup |
@@ -252,8 +262,8 @@ cloud GPU. Yours will differ with the machine and the picture.
 |---|---|---|
 | Text to image (Qwen-Image) | ~4.5 min | ~20 s |
 | Image to 3D (Pixal3D) | ~6 min | ~3 min |
-| Image to 3D (Hunyuan3D-MLX) | ~9 min | Mac only |
-| Image to 3D (TRELLIS.2) | 15–35 min | Mac only |
+| Image to 3D (Hunyuan3D-MLX) | ~9 min | Mac only (use [upstream](https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1) on NVIDIA) |
+| Image to 3D (TRELLIS.2) | 15–35 min | Mac only (use [upstream](https://github.com/microsoft/TRELLIS.2) on NVIDIA) |
 
 On a Mac, TRELLIS.2 runs about twice as fast with **Attention backend** set to `mlx`.
 

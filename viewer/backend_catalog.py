@@ -221,7 +221,8 @@ CATALOG: tuple[Backend, ...] = (
         tradeoff=(
             "On a Mac it compiles locally and needs full Xcode for the Metal compiler. "
             "On NVIDIA Linux with the CUDA toolkit it compiles for your card, which runs "
-            "about twice as fast; otherwise it downloads a prebuilt CUDA build."
+            "about twice as fast; otherwise Linux and Windows download a prebuilt CUDA build "
+            "(driver 575+)."
         ),
         license_name="MIT (code + flow weights); DINOv3 License (bundled encoder)",
         license_url="https://huggingface.co/raven38/pixal3d-sv-q8_0-v1",
@@ -285,7 +286,7 @@ CATALOG: tuple[Backend, ...] = (
         upstream=("Hunyuan3D-2.1", "https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1"),
         automated_setup=False,
         setup_minutes=40,
-        build_probes=(REPO / "vendor" / "hunyuan-mlx" / ".venv" / "bin" / "python",
+        build_probes=(venv_python(REPO / "vendor" / "hunyuan-mlx"),
                       venv_python(REPO / "hunyuan_mlx" / "paint")),
         caveat=(
             "The Hunyuan weights are not licensed for use in the EU, the UK or South Korea. "

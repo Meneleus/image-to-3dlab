@@ -20,6 +20,7 @@ def test_weight_total_matches_the_catalogue():
 @pytest.mark.parametrize("key,cuda_env,metal_env", [
     ("macos-arm64", "0", "1"),
     ("linux-nvidia", "1", "0"),
+    ("windows-nvidia", "1", "0"),
 ])
 def test_extension_build_flags_follow_the_machine(monkeypatch, key, cuda_env, metal_env):
     monkeypatch.setattr(boot, "find_nvcc", lambda: "/usr/local/cuda/bin/nvcc")
@@ -34,6 +35,7 @@ def test_linux_without_nvcc_builds_the_cpu_baker(monkeypatch):
     it still builds, and bakes on the CPU."""
     monkeypatch.setattr(boot, "find_nvcc", lambda: None)
     assert boot.build_env("linux-nvidia", {})["USE_CUDA"] == "0"
+    assert boot.build_env("windows-nvidia", {})["USE_CUDA"] == "0"
 
 
 def test_nvcc_off_path_is_put_on_it(monkeypatch):
@@ -53,13 +55,40 @@ def test_announcement_names_backend_route_size_and_gating(monkeypatch):
         assert needle in text
 
 
-@pytest.mark.parametrize("key", [None, "windows-nvidia"])
+@pytest.mark.parametrize("key", [None])
 def test_unsupported_machines_are_refused_before_anything(monkeypatch, capsys, key):
     monkeypatch.setattr(boot, "target", lambda: key)
     monkeypatch.setattr(boot, "install_code", lambda *a: pytest.fail("installed"))
     monkeypatch.setattr(boot, "install_weights", lambda: pytest.fail("downloaded"))
     assert boot.main(["--yes"]) == 1
     assert "Nothing downloaded" in capsys.readouterr().out
+
+
+def test_windows_nvidia_is_a_supported_route(monkeypatch):
+    monkeypatch.setattr(boot, "find_nvcc", lambda: None)
+    assert boot.route("windows-nvidia") is not None
+    monkeypatch.setattr(boot, "target", lambda: "windows-nvidia")
+    text = boot.announcement()
+    assert "Visual Studio Build Tools" in text
+
+
+def test_windows_compile_failure_names_the_build_tools(monkeypatch, tmp_path):
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(boot, "VENDOR", tmp_path)
+    monkeypatch.setattr(boot, "pip_install_command", lambda: ["pip", "install"])
+    monkeypatch.setattr(boot, "find_nvcc", lambda: None)
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        if cmd[:2] == ["pip", "install"]:
+            raise boot.subprocess.CalledProcessError(1, cmd)
+        return boot.subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(boot.subprocess, "run", run)
+    with pytest.raises(SystemExit, match="Visual Studio Build Tools"):
+        boot.install_code("windows-nvidia")
+    assert any(c[:2] == ["pip", "install"] for c in calls)
 
 
 def test_no_yes_and_no_terminal_means_no_download(monkeypatch):

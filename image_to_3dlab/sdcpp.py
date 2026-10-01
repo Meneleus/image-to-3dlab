@@ -13,9 +13,10 @@ import re
 
 NO_GPU_HELP = (
     "stable-diffusion.cpp could not reach the NVIDIA GPU and would run on the CPU, which "
-    "takes many minutes per picture. Check that `nvidia-smi` lists your card. On Linux, "
-    "especially a headless server or container, the usual cause is missing graphics "
-    "libraries: sudo apt install libegl1 libgl1. In a container, also set "
+    "takes many minutes per picture. Check that `nvidia-smi` lists your card. On Windows, "
+    "reinstall or update the NVIDIA driver, then reopen the terminal. On Linux, especially "
+    "a headless server or container, the usual cause is missing graphics libraries: "
+    "sudo apt install libegl1 libgl1. In a container, also set "
     "NVIDIA_DRIVER_CAPABILITIES=all."
 )
 

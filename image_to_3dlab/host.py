@@ -95,12 +95,31 @@ def host_platform(sys_platform: str | None = None, machine: str | None = None,
     return OTHER
 
 
+def _windows_cuda_roots() -> list[Path]:
+    """Usual Windows CUDA Toolkit install folders, newest version name first."""
+    roots: list[Path] = []
+    cuda_path = os.environ.get("CUDA_PATH")
+    if cuda_path:
+        roots.append(Path(cuda_path))
+    program_files = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
+    toolkit = program_files / "NVIDIA GPU Computing Toolkit" / "CUDA"
+    if toolkit.is_dir():
+        roots.extend(sorted(toolkit.glob("v*"), reverse=True))
+    return roots
+
+
 def find_nvcc() -> str | None:
     """The CUDA compiler: on PATH, or where the toolkit installs it by default. Its
-    absence from PATH is normal, so the default location is worth checking."""
+    absence from PATH is normal, so the default locations are worth checking."""
     found = shutil.which("nvcc")
     if found:
         return found
+    if os_family() == "windows":
+        for root in _windows_cuda_roots():
+            candidate = root / "bin" / "nvcc.exe"
+            if candidate.is_file():
+                return str(candidate)
+        return None
     default = Path("/usr/local/cuda/bin/nvcc")
     return str(default) if default.exists() else None
 
@@ -157,11 +176,41 @@ def cgroup_memory(root: Path = CGROUP) -> int | None:
     return None
 
 
+def _windows_total_memory() -> int | None:
+    """Physical RAM in bytes via GlobalMemoryStatusEx, or None on failure."""
+    import ctypes
+
+    class MEMORYSTATUSEX(ctypes.Structure):
+        _fields_ = [
+            ("dwLength", ctypes.c_ulong),
+            ("dwMemoryLoad", ctypes.c_ulong),
+            ("ullTotalPhys", ctypes.c_ulonglong),
+            ("ullAvailPhys", ctypes.c_ulonglong),
+            ("ullTotalPageFile", ctypes.c_ulonglong),
+            ("ullAvailPageFile", ctypes.c_ulonglong),
+            ("ullTotalVirtual", ctypes.c_ulonglong),
+            ("ullAvailVirtual", ctypes.c_ulonglong),
+            ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+        ]
+
+    status = MEMORYSTATUSEX()
+    status.dwLength = ctypes.sizeof(status)
+    if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+        return None
+    return int(status.ullTotalPhys)
+
+
 def total_memory() -> int | None:
     try:
         return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
     except (AttributeError, OSError, ValueError):
-        return None
+        pass
+    if os_family() == "windows":
+        try:
+            return _windows_total_memory()
+        except (AttributeError, OSError, ValueError):
+            return None
+    return None
 
 
 def build_jobs(cpus: int | None = None, memory_bytes: int | None = None,
