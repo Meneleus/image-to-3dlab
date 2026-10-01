@@ -37,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shared CCCL ensure hook, setup.py rewrites, torch `cpp_extension` patch, ninja/spawn
   sanitizer, `/std:` kept out of `CL`, stale `build/` wiped. Fixes a false nvdiffrast
   abort that mistook hook string literals for missing compile flags.
+- **`scripts/patch_ovoxel_msvc_narrowing.py`:** cast o-voxel `size_t` torch shapes to
+  `int64_t` so MSVC (VS 2022/18) stops with C2398; bootstrap applies it before building
+  `vendor/trellis2-cuda/o-voxel`.
 
 ## [0.3.6] - 2026-10-01
 

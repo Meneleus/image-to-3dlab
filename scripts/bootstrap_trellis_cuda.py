@@ -608,6 +608,15 @@ def patch_torch_cpp_extension_cxx20(py: Path) -> bool:
     return True
 
 
+def patch_ovoxel_msvc_narrowing(o_voxel: Path) -> None:
+    """Cast size_t torch shapes to int64_t so MSVC accepts o-voxel (C2398)."""
+    if host.os_family() != "windows":
+        return
+    script = REPO / "scripts" / "patch_ovoxel_msvc_narrowing.py"
+    print(f"Patching o-voxel for MSVC narrowing ({script.name})...", flush=True)
+    run([sys.executable, str(script), "--root", str(o_voxel)])
+
+
 def clean_extension_build_artifacts(target: Path) -> None:
     """Remove stale setuptools/ninja outputs so old /std:c++17 rules cannot linger."""
     removed = False
@@ -725,6 +734,7 @@ def install_extensions(py: Path) -> None:
     if o_voxel.is_dir():
         print("\nBuilding o-voxel...", flush=True)
         ensure_windows_extension_setup(o_voxel / "setup.py")
+        patch_ovoxel_msvc_narrowing(o_voxel)
         clean_extension_build_artifacts(o_voxel)
         uv = shutil.which("uv")
         try:

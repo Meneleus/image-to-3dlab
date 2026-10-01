@@ -208,6 +208,7 @@ The `*_pose.py` files are pure curve maths with no `bpy`, which is why they have
 | `patch_ovoxel_weld_before_simplify.py` | Weld coincident vertices before every `simplify()` in o_voxel's `to_glb`. |
 | `patch_ovoxel_skip_spurious_fill.py` | Use the measured-safe cleanup order for Metal remesh output. |
 | `patch_ovoxel_remesh_checkpoints.py` | Add opt-in exact geometry checkpoints to o_voxel's remesh branch. |
+| `patch_ovoxel_msvc_narrowing.py` | Fix MSVC C2398 narrowing in o-voxel torch shape brace-inits. |
 | `patch_metal_hashmap_miss.py` | Fix the unchecked hashmap miss in the Metal dual-contouring kernel. |
 | `patch_mtlbvh_production_traversal.py` | Apply the production-scale MtlBVH traversal and dispatch-lifetime fixes. |
 | `patch_rignet_macos_compat.py` | Make the vendored RigNet checkout run inference on macOS / Apple Silicon. |
