@@ -173,11 +173,19 @@ Windows that needs:
 | `CXXFLAGS` / `CL` | `/std:c++20 /Zc:preprocessor /Zc:__cplusplus` | Current PyTorch headers need C++20; CCCL (CUDA 12.8+/13.x) needs the conformant preprocessor |
 | `NVCC_FLAGS` / `NVCC_PREPEND_FLAGS` | `-std=c++20 … -Xcompiler=/Zc:preprocessor …` | Same flags for host code compiled via `nvcc` |
 
-It also **rewrites** FlexGEMM / CuMesh / o-voxel `setup.py` lists that still hardcode
-`/std:c++17` without `/Zc:preprocessor` — env alone is not enough for those packages.
+It also **rewrites** FlexGEMM / CuMesh / o-voxel `setup.py` — every `c++17` /
+`/std:c++17` / `-std=c++17` becomes the C++20 form, and `/Zc:preprocessor` is added —
+then **checks the file no longer contains `c++17` before `pip install`**.
+
+**Gotcha (cl D9025):** if `setup.py` still has `/std:c++17`, prepending `/std:c++20`
+via `CXXFLAGS` is useless. MSVC warns `overriding '/std:c++20' with '/std:c++17'` and
+the later C++17 wins, which breaks current PyTorch headers. The bootstrap must replace
+the hardcoded flags, not only set env.
 
 You do **not** need to set those variables by hand for a normal bootstrap. If you are
-debugging a failed build outside the script, the table above is what to use.
+debugging a failed build outside the script, the table above is what to use. Delete
+`vendor\trellis2-cuda\.i2l-build\FlexGEMM` and re-run the bootstrap if an old clone was
+built before this rewrite landed.
 
 **Blackwell (sm_120):** if nvcc builds for the wrong arch, set
 `TORCH_CUDA_ARCH_LIST=12.0` in the same shell before re-running the bootstrap.
@@ -190,7 +198,7 @@ debugging a failed build outside the script, the table above is what to use.
 | PyTorch stays on CPU | Re-run the installer, or install from the URL `python -m image_to_3dlab.host torch-index` prints. |
 | Pixal3D refuses the prebuilt | Update the driver to **575+**. |
 | TRELLIS/Hunyuan/SF3D compile fails | Install VS Build Tools (C++) + a CUDA toolkit matching PyTorch; reopen the “x64 Native Tools” shell and re-run the bootstrap. |
-| CCCL / “traditional preprocessor” / C++17 vs C++20 on FlexGEMM | Re-run `bootstrap_trellis_cuda.py` from this repo revision — it patches setup.py and sets the flags. See [above](#cuda-extension-builds-trellis2). |
+| `D9025` overriding `/std:c++20` with `/std:c++17`, or CCCL preprocessor errors on FlexGEMM | `setup.py` still has C++17. Pull latest, delete `vendor\trellis2-cuda\.i2l-build\FlexGEMM`, re-run bootstrap — it rewrites and verifies no `c++17` remains. See [above](#cuda-extension-builds-trellis2). |
 | TRELLIS fails only on Windows | Microsoft tests Linux; try the same bootstrap on Linux NVIDIA, or WSL2 with GPU. |
 | Generate Image is very slow / CPU | `nvidia-smi` must see the card; update the driver and reopen the terminal. |
 | Finish cannot find Blender | Install from blender.org, or set `I2L_BLENDER`. |

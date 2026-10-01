@@ -11,8 +11,8 @@ CUDA toolkit and Visual Studio C++ build tools are present; if an extension fail
 compile, this says so and stops without claiming success.
 
 On Windows this also applies the MSVC/CUDA flags modern toolchains need (C++20,
-`/Zc:preprocessor`) — both as process env and by rewriting hardcoded C++17 lists in
-extension `setup.py` files (FlexGEMM ignores CXXFLAGS alone).
+`/Zc:preprocessor`) — as process env and by *replacing* every hardcoded `c++17` in
+extension `setup.py` files (FlexGEMM's later `/std:c++17` overrides env C++20).
 
 Weights (~14 GB TRELLIS.2-4B + gated DINOv3) are *not* fetched here — they arrive on
 the first generation run, same as the Mac bootstrap. BRIA RMBG-2.0 is never installed.
@@ -60,14 +60,16 @@ BASIC = [
 ]
 
 # CUDA 12.8+/13.x CCCL + current PyTorch headers need C++20 and MSVC's conformant
-# preprocessor. FlexGEMM/CuMesh hardcode C++17 without /Zc:preprocessor, so env
-# alone is not enough — see patch_windows_extension_setup.
+# preprocessor. FlexGEMM/CuMesh hardcode C++17 without /Zc:preprocessor. Env
+# CXXFLAGS alone loses: cl warns D9025 and the later /std:c++17 from setup.py wins.
+# We rewrite every c++17 in setup.py before pip install — see ensure_windows_extension_setup.
 WIN_CXXFLAGS = "/std:c++20 /Zc:preprocessor /Zc:__cplusplus"
 WIN_NVCC_FLAGS = (
     "-std=c++20 -allow-unsupported-compiler "
     "-Xcompiler=/std:c++20 -Xcompiler=/Zc:preprocessor -Xcompiler=/Zc:__cplusplus"
 )
 WIN_SETUP_MARKER = "# image-to-3dlab: windows cxx20 + Zc:preprocessor\n"
+_CXX17_IN_SETUP = re.compile(r"c\+\+17", re.IGNORECASE)
 
 
 def announcement() -> str:
@@ -114,40 +116,64 @@ def windows_cuda_build_env(base: dict[str, str] | None = None) -> dict[str, str]
     return env
 
 
-def _bump_std_flags(text: str) -> str:
-    """Rewrite hardcoded C++17 compile flags to C++20 (MSVC and nvcc spellings)."""
-    for old, new in (
-        ('"/std:c++17"', '"/std:c++20"'),
-        ("'/std:c++17'", "'/std:c++20'"),
-        ('"-std=c++17"', '"-std=c++20"'),
-        ("'-std=c++17'", "'-std=c++20'"),
-        ('"-Xcompiler=/std:c++17"', '"-Xcompiler=/std:c++20"'),
-        ("'-Xcompiler=/std:c++17'", "'-Xcompiler=/std:c++20'"),
-    ):
-        text = text.replace(old, new)
+def setup_still_has_cxx17(text: str) -> bool:
+    """True if setup.py still names C++17 anywhere (compile flags must not)."""
+    return _CXX17_IN_SETUP.search(text) is not None
+
+
+def rewrite_setup_cxx_flags(text: str) -> str:
+    """Replace every C++17 compile-flag spelling with C++20; add /Zc:preprocessor.
+
+    Pure string rewrite used on Windows before building FlexGEMM / CuMesh / o-voxel.
+    Must *replace* hardcoded c++17 — prepending c++20 via env loses (cl D9025).
+    """
+    # Replace concrete flag spellings first, then any leftover c++17 token.
+    text = text.replace("-Xcompiler=/std:c++17", "-Xcompiler=/std:c++20")
+    text = text.replace("/std:c++17", "/std:c++20")
+    text = text.replace("-std=c++17", "-std=c++20")
+    text = _CXX17_IN_SETUP.sub("c++20", text)
+
+    text = _ensure_zc_preprocessor(text)
+    text = _rewrite_unix_only_args_for_msvc(text)
     return text
 
 
 def _ensure_zc_preprocessor(text: str) -> str:
-    """Add /Zc:preprocessor next to existing /Zc:__cplusplus entries if missing."""
+    """Add /Zc:preprocessor on MSVC cxx and nvcc -Xcompiler lines when missing."""
     if "/Zc:preprocessor" in text:
         return text
-    text = text.replace(
-        '"/Zc:__cplusplus"',
-        '"/Zc:__cplusplus", "/Zc:preprocessor"',
-    )
-    text = text.replace(
-        "'/Zc:__cplusplus'",
-        "'/Zc:__cplusplus', '/Zc:preprocessor'",
-    )
-    text = text.replace(
-        '"-Xcompiler=/Zc:__cplusplus"',
-        '"-Xcompiler=/Zc:__cplusplus", "-Xcompiler=/Zc:preprocessor"',
-    )
-    text = text.replace(
-        "'-Xcompiler=/Zc:__cplusplus'",
-        "'-Xcompiler=/Zc:__cplusplus', '-Xcompiler=/Zc:preprocessor'",
-    )
+    if "/Zc:__cplusplus" in text:
+        text = text.replace(
+            '"/Zc:__cplusplus"',
+            '"/Zc:__cplusplus", "/Zc:preprocessor"',
+        )
+        text = text.replace(
+            "'/Zc:__cplusplus'",
+            "'/Zc:__cplusplus', '/Zc:preprocessor'",
+        )
+        text = text.replace(
+            '"-Xcompiler=/Zc:__cplusplus"',
+            '"-Xcompiler=/Zc:__cplusplus", "-Xcompiler=/Zc:preprocessor"',
+        )
+        text = text.replace(
+            "'-Xcompiler=/Zc:__cplusplus'",
+            "'-Xcompiler=/Zc:__cplusplus', '-Xcompiler=/Zc:preprocessor'",
+        )
+        return text
+    # Windows cxx list present but no Zc flags yet (inject after /std:c++20).
+    if '"/std:c++20"' in text:
+        text = text.replace(
+            '"/std:c++20"',
+            '"/std:c++20", "/Zc:preprocessor", "/Zc:__cplusplus"',
+            1,
+        )
+    if '"-Xcompiler=/std:c++20"' in text:
+        text = text.replace(
+            '"-Xcompiler=/std:c++20"',
+            '"-Xcompiler=/std:c++20", "-Xcompiler=/Zc:preprocessor", '
+            '"-Xcompiler=/Zc:__cplusplus"',
+            1,
+        )
     return text
 
 
@@ -182,30 +208,58 @@ def _rewrite_unix_only_args_for_msvc(text: str) -> str:
 
 
 def patch_windows_extension_setup(setup_py: Path) -> bool:
-    """Rewrite extension setup.py compile flags for modern MSVC + CUDA 12.8+/13.x.
+    """Rewrite extension setup.py: every c++17 → c++20, ensure /Zc:preprocessor.
 
-    Bumps C++17 → C++20, adds `/Zc:preprocessor` (CCCL), and converts unix-only
-    flag lists to MSVC spellings when needed. Idempotent. Returns True if the file
-    changed. No-op on non-Windows hosts.
+    Idempotent only when no c++17 remains. Returns True if the file changed.
+    No-op on non-Windows hosts.
     """
     if host.os_family() != "windows":
         return False
     if not setup_py.is_file():
         return False
     text = setup_py.read_text(encoding="utf-8")
-    if WIN_SETUP_MARKER in text and "/std:c++20" in text and "/Zc:preprocessor" in text:
+    # Never skip while c++17 is still present (old early-return could).
+    if (
+        not setup_still_has_cxx17(text)
+        and WIN_SETUP_MARKER in text
+        and "/Zc:preprocessor" in text
+    ):
         return False
     original = text
-    text = _bump_std_flags(text)
-    text = _ensure_zc_preprocessor(text)
-    text = _rewrite_unix_only_args_for_msvc(text)
-    if text == original:
+    text = rewrite_setup_cxx_flags(text)
+    if text == original and not setup_still_has_cxx17(text):
         return False
     if WIN_SETUP_MARKER not in text:
         text = WIN_SETUP_MARKER + text
     setup_py.write_text(text, encoding="utf-8")
     print(f"Patched Windows CUDA flags in {setup_py}", flush=True)
     return True
+
+
+def ensure_windows_extension_setup(setup_py: Path) -> None:
+    """Patch setup.py on Windows and refuse to build if any c++17 remains.
+
+    FlexGEMM's hardcoded /std:c++17 overrides env c++20 (cl D9025). Pip must not
+    run until the file is clean.
+    """
+    if host.os_family() != "windows":
+        return
+    if not setup_py.is_file():
+        raise SystemExit(f"Missing {setup_py}; cannot apply Windows CUDA compile flags.")
+    patch_windows_extension_setup(setup_py)
+    text = setup_py.read_text(encoding="utf-8")
+    if setup_still_has_cxx17(text):
+        raise SystemExit(
+            f"{setup_py} still contains c++17 after patching. "
+            "Refusing to build — later /std:c++17 would override C++20 (cl D9025) "
+            "and break PyTorch headers. See docs/WINDOWS.md."
+        )
+    if "/Zc:preprocessor" not in text and "/std:c++20" in text:
+        raise SystemExit(
+            f"{setup_py} is missing /Zc:preprocessor (required by CCCL on "
+            "CUDA 12.8+/13.x). See docs/WINDOWS.md."
+        )
+    print(f"Verified no c++17 in {setup_py}", flush=True)
 
 
 def extension_build_env() -> dict[str, str]:
@@ -272,7 +326,7 @@ def install_extension(py: Path, name: str, url: str, ref: str | None,
         if ref:
             run(["git", "checkout", ref], cwd=target)
     setup_py = target / "setup.py"
-    patch_windows_extension_setup(setup_py)
+    ensure_windows_extension_setup(setup_py)
     uv = shutil.which("uv")
     run([uv, "pip", "install", "--python", str(py), "--no-build-isolation", str(target)],
         env=extension_build_env())
@@ -295,7 +349,7 @@ def install_extensions(py: Path) -> None:
     o_voxel = VENDOR / "o-voxel"
     if o_voxel.is_dir():
         print("\nBuilding o-voxel...", flush=True)
-        patch_windows_extension_setup(o_voxel / "setup.py")
+        ensure_windows_extension_setup(o_voxel / "setup.py")
         uv = shutil.which("uv")
         try:
             run([uv, "pip", "install", "--python", str(py), "--no-build-isolation",

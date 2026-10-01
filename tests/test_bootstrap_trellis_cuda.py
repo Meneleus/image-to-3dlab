@@ -80,6 +80,16 @@ def test_windows_cuda_build_env_noop_on_linux(monkeypatch):
     assert "DISTUTILS_USE_SDK" not in boot.windows_cuda_build_env(base)
 
 
+def test_rewrite_setup_cxx_flags_removes_every_cxx17():
+    out = boot.rewrite_setup_cxx_flags(FLEXGEMM_SETUP)
+    assert "c++17" not in out.lower()
+    assert "/std:c++20" in out
+    assert "-std=c++20" in out
+    assert "-Xcompiler=/std:c++20" in out
+    assert "/Zc:preprocessor" in out
+    assert "-Xcompiler=/Zc:preprocessor" in out
+
+
 def test_patch_windows_extension_setup_bumps_flexgemm_flags(monkeypatch, tmp_path):
     monkeypatch.setattr(boot.host, "os_family", lambda: "windows")
     setup = tmp_path / "setup.py"
@@ -87,14 +97,48 @@ def test_patch_windows_extension_setup_bumps_flexgemm_flags(monkeypatch, tmp_pat
     assert boot.patch_windows_extension_setup(setup) is True
     text = setup.read_text(encoding="utf-8")
     assert boot.WIN_SETUP_MARKER in text
+    assert "c++17" not in text.lower()
     assert "/std:c++20" in text
-    assert "/std:c++17" not in text
-    assert "-std=c++20" in text
     assert "-Xcompiler=/std:c++20" in text
     assert "/Zc:preprocessor" in text
     assert "-Xcompiler=/Zc:preprocessor" in text
-    # Idempotent
+    # Idempotent once clean
     assert boot.patch_windows_extension_setup(setup) is False
+
+
+def test_patch_rewrites_even_when_marker_present_but_cxx17_remains(monkeypatch, tmp_path):
+    """Stale early-return must not leave hardcoded c++17 in place."""
+    monkeypatch.setattr(boot.host, "os_family", lambda: "windows")
+    setup = tmp_path / "setup.py"
+    setup.write_text(
+        boot.WIN_SETUP_MARKER
+        + 'flags = ["/std:c++17", "/Zc:preprocessor", "-std=c++17"]\n',
+        encoding="utf-8",
+    )
+    assert boot.patch_windows_extension_setup(setup) is True
+    text = setup.read_text(encoding="utf-8")
+    assert "c++17" not in text.lower()
+    assert "/std:c++20" in text
+
+
+def test_ensure_windows_extension_setup_refuses_leftover_cxx17(monkeypatch, tmp_path):
+    monkeypatch.setattr(boot.host, "os_family", lambda: "windows")
+    setup = tmp_path / "setup.py"
+    setup.write_text(FLEXGEMM_SETUP, encoding="utf-8")
+    # Sabotage: patch that leaves c++17 somehow — force verify path.
+    monkeypatch.setattr(boot, "patch_windows_extension_setup", lambda _p: False)
+    with pytest.raises(SystemExit, match=r"still contains c\+\+17"):
+        boot.ensure_windows_extension_setup(setup)
+
+
+def test_ensure_windows_extension_setup_ok_after_rewrite(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(boot.host, "os_family", lambda: "windows")
+    setup = tmp_path / "setup.py"
+    setup.write_text(FLEXGEMM_SETUP, encoding="utf-8")
+    boot.ensure_windows_extension_setup(setup)
+    text = setup.read_text(encoding="utf-8")
+    assert "c++17" not in text.lower()
+    assert "Verified no c++17" in capsys.readouterr().out
 
 
 def test_patch_windows_extension_setup_rewrites_ovoxel_unix_flags(monkeypatch, tmp_path):
@@ -103,10 +147,10 @@ def test_patch_windows_extension_setup_rewrites_ovoxel_unix_flags(monkeypatch, t
     setup.write_text(O_VOXEL_SETUP, encoding="utf-8")
     assert boot.patch_windows_extension_setup(setup) is True
     text = setup.read_text(encoding="utf-8")
+    assert "c++17" not in text.lower()
     assert '"/std:c++20"' in text
     assert "/Zc:preprocessor" in text
     assert "-Xcompiler=/Zc:preprocessor" in text
-    assert '"-std=c++17"' not in text
 
 
 def test_patch_windows_extension_setup_noop_off_windows(monkeypatch, tmp_path):
@@ -114,4 +158,6 @@ def test_patch_windows_extension_setup_noop_off_windows(monkeypatch, tmp_path):
     setup = tmp_path / "setup.py"
     setup.write_text(FLEXGEMM_SETUP, encoding="utf-8")
     assert boot.patch_windows_extension_setup(setup) is False
+    assert setup.read_text(encoding="utf-8") == FLEXGEMM_SETUP
+    boot.ensure_windows_extension_setup(setup)  # no-op off Windows
     assert setup.read_text(encoding="utf-8") == FLEXGEMM_SETUP

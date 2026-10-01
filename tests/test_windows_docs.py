@@ -21,7 +21,8 @@ def test_windows_guide_exists_and_names_the_working_routes():
 def test_windows_guide_documents_trellis_cuda_compile_flags():
     text = (REPO / "docs" / "WINDOWS.md").read_text()
     for needle in ("DISTUTILS_USE_SDK", "/std:c++20", "/Zc:preprocessor",
-                   "FlexGEMM", "sm_120", "Blackwell", "CUDA Toolkit"):
+                   "FlexGEMM", "sm_120", "Blackwell", "CUDA Toolkit",
+                   "D9025", "c++17"):
         assert needle in text, needle
 
 
