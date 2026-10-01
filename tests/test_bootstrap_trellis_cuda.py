@@ -60,15 +60,16 @@ def test_no_yes_without_terminal_refuses(monkeypatch):
     assert boot.main([]) == 1
 
 
-def test_windows_cuda_build_env_sets_msvc_flags(monkeypatch):
+def test_windows_cuda_build_env_sets_zc_not_std(monkeypatch):
+    """CL must not carry /std:c++20 — that races with torch under --use-local-env."""
     monkeypatch.setattr(boot.host, "os_family", lambda: "windows")
-    env = boot.windows_cuda_build_env({"PATH": "C:\\x"})
+    env = boot.windows_cuda_build_env({"PATH": "C:\\x", "CL": "/std:c++17 /something"})
     assert env["DISTUTILS_USE_SDK"] == "1"
-    assert "/std:c++20" in env["CXXFLAGS"]
     assert "/Zc:preprocessor" in env["CXXFLAGS"]
     assert "/Zc:__cplusplus" in env["CXXFLAGS"]
-    assert "/std:c++20" in env["CL"]
-    assert "-std=c++20" in env["NVCC_FLAGS"]
+    assert "/std:" not in env["CL"]
+    assert "/std:" not in env["CXXFLAGS"]
+    assert "-std=" not in env["NVCC_FLAGS"]
     assert "-Xcompiler=/Zc:preprocessor" in env["NVCC_FLAGS"]
     assert env["NVCC_PREPEND_FLAGS"] == env["NVCC_FLAGS"]
 
@@ -78,6 +79,20 @@ def test_windows_cuda_build_env_noop_on_linux(monkeypatch):
     base = {"PATH": "/usr/bin"}
     assert boot.windows_cuda_build_env(base) == base
     assert "DISTUTILS_USE_SDK" not in boot.windows_cuda_build_env(base)
+
+
+def test_sanitize_std_flags_keeps_only_cxx20():
+    mixed = [
+        "/O2", "/std:c++20", "/EHsc", "/std:c++17",
+        "-std=c++17", "-Xcompiler", "/std:c++17", "-Xcompiler=/std:c++20",
+    ]
+    out = boot.sanitize_std_flags(mixed)
+    joined = " ".join(out)
+    assert "c++17" not in joined.lower()
+    assert out.count("/std:c++20") == 1
+    assert out.count("-std=c++20") == 1
+    assert out.count("-Xcompiler=/std:c++20") == 1
+    assert "/O2" in out and "/EHsc" in out
 
 
 def test_rewrite_setup_cxx_flags_removes_every_cxx17():
@@ -97,7 +112,8 @@ def test_patch_windows_extension_setup_bumps_flexgemm_flags(monkeypatch, tmp_pat
     assert boot.patch_windows_extension_setup(setup) is True
     text = setup.read_text(encoding="utf-8")
     assert boot.WIN_SETUP_MARKER in text
-    assert "c++17" not in text.lower()
+    assert boot.WIN_HOOK_BEGIN in text
+    assert boot.setup_still_has_cxx17(text) is False
     assert "/std:c++20" in text
     assert "-Xcompiler=/std:c++20" in text
     assert "/Zc:preprocessor" in text
@@ -117,15 +133,15 @@ def test_patch_rewrites_even_when_marker_present_but_cxx17_remains(monkeypatch, 
     )
     assert boot.patch_windows_extension_setup(setup) is True
     text = setup.read_text(encoding="utf-8")
-    assert "c++17" not in text.lower()
+    assert boot.setup_still_has_cxx17(text) is False
     assert "/std:c++20" in text
+    assert boot.WIN_HOOK_BEGIN in text
 
 
 def test_ensure_windows_extension_setup_refuses_leftover_cxx17(monkeypatch, tmp_path):
     monkeypatch.setattr(boot.host, "os_family", lambda: "windows")
     setup = tmp_path / "setup.py"
     setup.write_text(FLEXGEMM_SETUP, encoding="utf-8")
-    # Sabotage: patch that leaves c++17 somehow — force verify path.
     monkeypatch.setattr(boot, "patch_windows_extension_setup", lambda _p: False)
     with pytest.raises(SystemExit, match=r"still contains c\+\+17"):
         boot.ensure_windows_extension_setup(setup)
@@ -137,7 +153,8 @@ def test_ensure_windows_extension_setup_ok_after_rewrite(monkeypatch, tmp_path, 
     setup.write_text(FLEXGEMM_SETUP, encoding="utf-8")
     boot.ensure_windows_extension_setup(setup)
     text = setup.read_text(encoding="utf-8")
-    assert "c++17" not in text.lower()
+    assert boot.setup_still_has_cxx17(text) is False
+    assert boot.WIN_HOOK_BEGIN in text
     assert "Verified no c++17" in capsys.readouterr().out
 
 
@@ -147,7 +164,7 @@ def test_patch_windows_extension_setup_rewrites_ovoxel_unix_flags(monkeypatch, t
     setup.write_text(O_VOXEL_SETUP, encoding="utf-8")
     assert boot.patch_windows_extension_setup(setup) is True
     text = setup.read_text(encoding="utf-8")
-    assert "c++17" not in text.lower()
+    assert boot.setup_still_has_cxx17(text) is False
     assert '"/std:c++20"' in text
     assert "/Zc:preprocessor" in text
     assert "-Xcompiler=/Zc:preprocessor" in text
@@ -161,3 +178,36 @@ def test_patch_windows_extension_setup_noop_off_windows(monkeypatch, tmp_path):
     assert setup.read_text(encoding="utf-8") == FLEXGEMM_SETUP
     boot.ensure_windows_extension_setup(setup)  # no-op off Windows
     assert setup.read_text(encoding="utf-8") == FLEXGEMM_SETUP
+
+
+def test_clean_extension_build_artifacts_removes_stale_dirs(tmp_path):
+    build = tmp_path / "build"
+    build.mkdir()
+    (build / "build.ninja").write_text("c++17", encoding="utf-8")
+    egg = tmp_path / "flex_gemm.egg-info"
+    egg.mkdir()
+    boot.clean_extension_build_artifacts(tmp_path)
+    assert not build.exists()
+    assert not egg.exists()
+
+
+def test_patch_torch_cpp_extension_cxx20(monkeypatch, tmp_path):
+    monkeypatch.setattr(boot.host, "os_family", lambda: "windows")
+    fake = tmp_path / "cpp_extension.py"
+    fake.write_text('cuda_cflags = ["-std=c++17"]\nflag = "/std:c++17"\n', encoding="utf-8")
+    py = tmp_path / "python.exe"
+    py.write_text("", encoding="utf-8")
+
+    def fake_run(cmd, capture_output=False, text=False, check=False):
+        class R:
+            returncode = 0
+            stdout = str(fake) + "\n"
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr(boot.subprocess, "run", fake_run)
+    assert boot.patch_torch_cpp_extension_cxx20(py) is True
+    text = fake.read_text(encoding="utf-8")
+    assert "c++17" not in text
+    assert "-std=c++20" in text and "/std:c++20" in text
+    assert boot.patch_torch_cpp_extension_cxx20(py) is False

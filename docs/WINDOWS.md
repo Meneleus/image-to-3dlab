@@ -165,27 +165,22 @@ Windows that needs:
 3. A driver new enough for that toolkit (and for your GPU — **Blackwell / sm_120**
    needs a recent driver plus a toolkit that knows `sm_120`).
 
-`scripts/bootstrap_trellis_cuda.py` applies these flags automatically on Windows:
+`scripts/bootstrap_trellis_cuda.py` forces **only C++20** on the compile line:
 
-| Variable | Value | Why |
-|---|---|---|
-| `DISTUTILS_USE_SDK` | `1` | Lets distutils find the VS C++ toolchain |
-| `CXXFLAGS` / `CL` | `/std:c++20 /Zc:preprocessor /Zc:__cplusplus` | Current PyTorch headers need C++20; CCCL (CUDA 12.8+/13.x) needs the conformant preprocessor |
-| `NVCC_FLAGS` / `NVCC_PREPEND_FLAGS` | `-std=c++20 … -Xcompiler=/Zc:preprocessor …` | Same flags for host code compiled via `nvcc` |
+| Step | What it does |
+|---|---|
+| Env | `DISTUTILS_USE_SDK=1`, `CL`/`CXXFLAGS` = `/Zc:preprocessor /Zc:__cplusplus` only (no `/std:` in env) |
+| `setup.py` rewrite | Every `c++17` → `c++20`; add `/Zc:preprocessor`; inject a runtime hook |
+| Torch patch | Rewrites `c++17` → `c++20` inside this venv’s `torch/utils/cpp_extension.py` (older wheels hardcode `-std=c++17` into ninja) |
+| Runtime hook | Sanitizes ninja flag lists + `compiler.spawn` so a line never carries both 17 and 20 |
+| Clean | Deletes `build/`, `*.egg-info`, `build.ninja` before `pip install` |
 
-It also **rewrites** FlexGEMM / CuMesh / o-voxel `setup.py` — every `c++17` /
-`/std:c++17` / `-std=c++17` becomes the C++20 form, and `/Zc:preprocessor` is added —
-then **checks the file no longer contains `c++17` before `pip install`**.
-
-**Gotcha (cl D9025):** if `setup.py` still has `/std:c++17`, prepending `/std:c++20`
-via `CXXFLAGS` is useless. MSVC warns `overriding '/std:c++20' with '/std:c++17'` and
-the later C++17 wins, which breaks current PyTorch headers. The bootstrap must replace
-the hardcoded flags, not only set env.
-
-You do **not** need to set those variables by hand for a normal bootstrap. If you are
-debugging a failed build outside the script, the table above is what to use. Delete
-`vendor\trellis2-cuda\.i2l-build\FlexGEMM` and re-run the bootstrap if an old clone was
-built before this rewrite landed.
+**Gotcha (cl D9025):** several places inject `/std:` — FlexGEMM `setup.py`, older PyTorch
+ninja rules, and `CL` under nvcc `--use-local-env`. If **both** `/std:c++20` and
+`/std:c++17` appear, MSVC warns `overriding …` back and forth and the final standard
+is wrong. Do **not** hand-set `CL=/std:c++20` while debugging; let the bootstrap own it.
+Clear stale builds: delete `vendor\trellis2-cuda\.i2l-build\FlexGEMM` (or at least its
+`build\` folder / `build.ninja`) and re-run.
 
 **Blackwell (sm_120):** if nvcc builds for the wrong arch, set
 `TORCH_CUDA_ARCH_LIST=12.0` in the same shell before re-running the bootstrap.
@@ -198,7 +193,7 @@ built before this rewrite landed.
 | PyTorch stays on CPU | Re-run the installer, or install from the URL `python -m image_to_3dlab.host torch-index` prints. |
 | Pixal3D refuses the prebuilt | Update the driver to **575+**. |
 | TRELLIS/Hunyuan/SF3D compile fails | Install VS Build Tools (C++) + a CUDA toolkit matching PyTorch; reopen the “x64 Native Tools” shell and re-run the bootstrap. |
-| `D9025` overriding `/std:c++20` with `/std:c++17`, or CCCL preprocessor errors on FlexGEMM | `setup.py` still has C++17. Pull latest, delete `vendor\trellis2-cuda\.i2l-build\FlexGEMM`, re-run bootstrap — it rewrites and verifies no `c++17` remains. See [above](#cuda-extension-builds-trellis2). |
+| `D9025` flipping `/std:c++20` ↔ `/std:c++17` on FlexGEMM | Torch and/or `setup.py` still emit C++17, or a stale `build\` ninja file. Pull latest, delete `vendor\trellis2-cuda\.i2l-build\FlexGEMM`, unset any hand-set `CL`/`CXXFLAGS` `/std:`, re-run bootstrap. See [above](#cuda-extension-builds-trellis2). |
 | TRELLIS fails only on Windows | Microsoft tests Linux; try the same bootstrap on Linux NVIDIA, or WSL2 with GPU. |
 | Generate Image is very slow / CPU | `nvidia-smi` must see the card; update the driver and reopen the terminal. |
 | Finish cannot find Blender | Install from blender.org, or set `I2L_BLENDER`. |

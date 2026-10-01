@@ -32,10 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - SF3D and viewer hints no longer tell Windows/Linux users to run the Mac-only
   `bootstrap_macos.sh`.
-- **TRELLIS.2 CUDA bootstrap on Windows** sets `DISTUTILS_USE_SDK`, C++20, and
-  `/Zc:preprocessor`, **replaces** every hardcoded `c++17` in FlexGEMM / CuMesh /
-  o-voxel `setup.py` (env-prepended C++20 loses to later `/std:c++17` — cl D9025),
-  and refuses to build if `c++17` remains.
+- **TRELLIS.2 CUDA bootstrap on Windows** forces a single C++20 standard on FlexGEMM
+  builds: rewrites `setup.py`, patches the venv’s `torch.utils.cpp_extension`
+  (older wheels hardcode c++17 into ninja), injects a ninja/spawn sanitizer, keeps
+  `/std:` out of `CL` (avoids D9025 flip-flops), and wipes stale `build/` dirs.
 
 ## [0.3.6] - 2026-10-01
 

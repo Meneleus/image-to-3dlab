@@ -10,9 +10,11 @@ Microsoft's README only claims Linux testing. On Windows the same steps run when
 CUDA toolkit and Visual Studio C++ build tools are present; if an extension fails to
 compile, this says so and stops without claiming success.
 
-On Windows this also applies the MSVC/CUDA flags modern toolchains need (C++20,
-`/Zc:preprocessor`) — as process env and by *replacing* every hardcoded `c++17` in
-extension `setup.py` files (FlexGEMM's later `/std:c++17` overrides env C++20).
+On Windows this forces C++20 end-to-end: rewrites extension `setup.py`, patches the
+venv's `torch.utils.cpp_extension` (older wheels hardcode `-std=c++17` into ninja),
+injects a runtime sanitizer so cl/nvcc lines never mix 17 and 20, and wipes stale
+build dirs. Env only carries `/Zc:preprocessor` — not a second `/std:` (that causes
+cl D9025 flip-flops with `--use-local-env`).
 
 Weights (~14 GB TRELLIS.2-4B + gated DINOv3) are *not* fetched here — they arrive on
 the first generation run, same as the Mac bootstrap. BRIA RMBG-2.0 is never installed.
@@ -60,16 +62,107 @@ BASIC = [
 ]
 
 # CUDA 12.8+/13.x CCCL + current PyTorch headers need C++20 and MSVC's conformant
-# preprocessor. FlexGEMM/CuMesh hardcode C++17 without /Zc:preprocessor. Env
-# CXXFLAGS alone loses: cl warns D9025 and the later /std:c++17 from setup.py wins.
-# We rewrite every c++17 in setup.py before pip install — see ensure_windows_extension_setup.
-WIN_CXXFLAGS = "/std:c++20 /Zc:preprocessor /Zc:__cplusplus"
+# preprocessor. Sources of c++17 on Windows:
+#   1) FlexGEMM/CuMesh setup.py hardcodes /std:c++17
+#   2) Older torch.utils.cpp_extension hardcodes -std=c++17 into ninja cuda_cflags
+#   3) Stale build/ ninja files from a previous failed compile
+# Putting /std:c++20 in CL *and* on the command line causes D9025 flip-flops under
+# nvcc --use-local-env. So env carries only Zc flags; std comes from setup.py + torch.
+WIN_CL_FLAGS = "/Zc:preprocessor /Zc:__cplusplus"
 WIN_NVCC_FLAGS = (
-    "-std=c++20 -allow-unsupported-compiler "
-    "-Xcompiler=/std:c++20 -Xcompiler=/Zc:preprocessor -Xcompiler=/Zc:__cplusplus"
+    "-allow-unsupported-compiler "
+    "-Xcompiler=/Zc:preprocessor -Xcompiler=/Zc:__cplusplus"
 )
 WIN_SETUP_MARKER = "# image-to-3dlab: windows cxx20 + Zc:preprocessor\n"
+WIN_HOOK_BEGIN = "# --- image-to-3dlab: force C++20 on cl/nvcc (begin) ---\n"
+WIN_HOOK_END = "# --- image-to-3dlab: force C++20 on cl/nvcc (end) ---\n"
 _CXX17_IN_SETUP = re.compile(r"c\+\+17", re.IGNORECASE)
+
+# Injected into each extension setup.py so torch's ninja writer cannot emit c++17.
+WIN_CXX20_HOOK = '''\
+# --- image-to-3dlab: force C++20 on cl/nvcc (begin) ---
+def _i2l_sanitize_std_flags(flags):
+    """Replace c++17→c++20; keep at most one /std:, -std=c++*, -Xcompiler=/std:."""
+    if not flags:
+        return flags
+    result = []
+    msvc_std = gnu_std = xcomp_std = None
+    i, n = 0, len(flags)
+    while i < n:
+        f = flags[i]
+        if not isinstance(f, str):
+            result.append(f)
+            i += 1
+            continue
+        f = f.replace("c++17", "c++20").replace("C++17", "c++20")
+        if f.startswith("/std:"):
+            msvc_std = "/std:c++20"
+            i += 1
+            continue
+        if f.startswith("-std=") and "c++" in f.lower():
+            gnu_std = "-std=c++20"
+            i += 1
+            continue
+        if f.startswith("-Xcompiler=/std:") or f.startswith("-Xcompiler,/std:"):
+            xcomp_std = "-Xcompiler=/std:c++20"
+            i += 1
+            continue
+        if f == "-Xcompiler" and i + 1 < n and isinstance(flags[i + 1], str):
+            nxt = flags[i + 1].replace("c++17", "c++20").replace("C++17", "c++20")
+            if nxt.startswith("/std:"):
+                xcomp_std = "-Xcompiler=/std:c++20"
+                i += 2
+                continue
+        result.append(f)
+        i += 1
+    if msvc_std:
+        result.append(msvc_std)
+    if gnu_std:
+        result.append(gnu_std)
+    if xcomp_std:
+        result.append(xcomp_std)
+    return result
+
+def _i2l_force_cxx20():
+    try:
+        import torch.utils.cpp_extension as _tce
+    except ImportError:
+        return
+    _orig_write = _tce._write_ninja_file
+    def _write_ninja_file(*args, **kwargs):
+        args = list(args)
+        for idx in range(1, min(5, len(args))):
+            if args[idx] is not None:
+                args[idx] = _i2l_sanitize_std_flags(list(args[idx]))
+        for key in ("cflags", "post_cflags", "cuda_cflags", "cuda_post_cflags"):
+            if kwargs.get(key) is not None:
+                kwargs[key] = _i2l_sanitize_std_flags(list(kwargs[key]))
+        return _orig_write(*args, **kwargs)
+    _tce._write_ninja_file = _write_ninja_file
+    _orig_be = _tce.BuildExtension.build_extensions
+    def build_extensions(self):
+        for ext in self.extensions:
+            eca = getattr(ext, "extra_compile_args", None)
+            if isinstance(eca, dict):
+                for key, val in list(eca.items()):
+                    eca[key] = _i2l_sanitize_std_flags(list(val) if val else [])
+            elif isinstance(eca, (list, tuple)):
+                ext.extra_compile_args = _i2l_sanitize_std_flags(list(eca))
+        compiler = self.compiler
+        if compiler is not None and not getattr(compiler, "_i2l_cxx20_wrapped", False):
+            _spawn = compiler.spawn
+            def spawn(cmd, *a, **k):
+                if isinstance(cmd, (list, tuple)):
+                    cmd = _i2l_sanitize_std_flags(list(cmd))
+                return _spawn(cmd, *a, **k)
+            compiler.spawn = spawn
+            compiler._i2l_cxx20_wrapped = True
+        return _orig_be(self)
+    _tce.BuildExtension.build_extensions = build_extensions
+
+_i2l_force_cxx20()
+# --- image-to-3dlab: force C++20 on cl/nvcc (end) ---
+'''
 
 
 def announcement() -> str:
@@ -92,8 +185,8 @@ def announcement() -> str:
     ]
     if family == "windows":
         lines += [
-            "           This script sets DISTUTILS_USE_SDK, C++20, and",
-            "           /Zc:preprocessor for CUDA 12.8+/13.x + modern MSVC.",
+            "           Forces C++20 (setup.py + torch cpp_extension + sanitizer)",
+            "           and /Zc:preprocessor for CUDA 12.8+/13.x + modern MSVC.",
         ]
     lines.append("")
     return "\n".join(lines)
@@ -102,23 +195,78 @@ def announcement() -> str:
 def windows_cuda_build_env(base: dict[str, str] | None = None) -> dict[str, str]:
     """Env for building CUDA extensions on Windows with CUDA 12.8+/13.x + MSVC.
 
-    Sets DISTUTILS_USE_SDK (so distutils finds the VS toolchain), C++20, and the
-    conformant preprocessor flag CCCL requires. No-op on non-Windows hosts.
+    Sets DISTUTILS_USE_SDK and /Zc:preprocessor. Does *not* put /std:c++20 in CL —
+    that races with torch/setup.py under nvcc --use-local-env (cl D9025 flip-flops).
+    No-op on non-Windows hosts.
     """
     env = dict(base if base is not None else os.environ)
     if host.os_family() != "windows":
         return env
     env["DISTUTILS_USE_SDK"] = "1"
-    env["CXXFLAGS"] = WIN_CXXFLAGS
-    env["CL"] = WIN_CXXFLAGS
+    # Strip any user-exported /std: from CL/CXXFLAGS so only one standard remains.
+    env["CL"] = WIN_CL_FLAGS
+    env["CXXFLAGS"] = WIN_CL_FLAGS
     env["NVCC_FLAGS"] = WIN_NVCC_FLAGS
     env["NVCC_PREPEND_FLAGS"] = WIN_NVCC_FLAGS
     return env
 
 
 def setup_still_has_cxx17(text: str) -> bool:
-    """True if setup.py still names C++17 anywhere (compile flags must not)."""
-    return _CXX17_IN_SETUP.search(text) is not None
+    """True if setup.py still names C++17 outside our injected hook comments."""
+    # Ignore the hook body (it mentions c++17 only as a string to replace).
+    scrubbed = text
+    if WIN_HOOK_BEGIN in scrubbed and WIN_HOOK_END in scrubbed:
+        start = scrubbed.index(WIN_HOOK_BEGIN)
+        end = scrubbed.index(WIN_HOOK_END) + len(WIN_HOOK_END)
+        scrubbed = scrubbed[:start] + scrubbed[end:]
+    return _CXX17_IN_SETUP.search(scrubbed) is not None
+
+
+def sanitize_std_flags(flags: list) -> list:
+    """Replace c++17→c++20; keep at most one /std:, -std=c++*, -Xcompiler=/std:.
+
+    Pure helper (same rules as the setup.py runtime hook). Compile lines must never
+    carry both c++17 and c++20.
+    """
+    if not flags:
+        return flags
+    result: list = []
+    msvc_std = gnu_std = xcomp_std = None
+    i, n = 0, len(flags)
+    while i < n:
+        f = flags[i]
+        if not isinstance(f, str):
+            result.append(f)
+            i += 1
+            continue
+        f = f.replace("c++17", "c++20").replace("C++17", "c++20")
+        if f.startswith("/std:"):
+            msvc_std = "/std:c++20"
+            i += 1
+            continue
+        if f.startswith("-std=") and "c++" in f.lower():
+            gnu_std = "-std=c++20"
+            i += 1
+            continue
+        if f.startswith("-Xcompiler=/std:") or f.startswith("-Xcompiler,/std:"):
+            xcomp_std = "-Xcompiler=/std:c++20"
+            i += 1
+            continue
+        if f == "-Xcompiler" and i + 1 < n and isinstance(flags[i + 1], str):
+            nxt = flags[i + 1].replace("c++17", "c++20").replace("C++17", "c++20")
+            if nxt.startswith("/std:"):
+                xcomp_std = "-Xcompiler=/std:c++20"
+                i += 2
+                continue
+        result.append(f)
+        i += 1
+    if msvc_std:
+        result.append(msvc_std)
+    if gnu_std:
+        result.append(gnu_std)
+    if xcomp_std:
+        result.append(xcomp_std)
+    return result
 
 
 def rewrite_setup_cxx_flags(text: str) -> str:
@@ -131,11 +279,31 @@ def rewrite_setup_cxx_flags(text: str) -> str:
     text = text.replace("-Xcompiler=/std:c++17", "-Xcompiler=/std:c++20")
     text = text.replace("/std:c++17", "/std:c++20")
     text = text.replace("-std=c++17", "-std=c++20")
-    text = _CXX17_IN_SETUP.sub("c++20", text)
+    # Do not rewrite c++17 inside our hook (it is the sanitizer source).
+    if WIN_HOOK_BEGIN in text and WIN_HOOK_END in text:
+        start = text.index(WIN_HOOK_BEGIN)
+        end = text.index(WIN_HOOK_END) + len(WIN_HOOK_END)
+        head, hook, tail = text[:start], text[start:end], text[end:]
+        head = _CXX17_IN_SETUP.sub("c++20", head)
+        tail = _CXX17_IN_SETUP.sub("c++20", tail)
+        text = head + hook + tail
+    else:
+        text = _CXX17_IN_SETUP.sub("c++20", text)
 
     text = _ensure_zc_preprocessor(text)
     text = _rewrite_unix_only_args_for_msvc(text)
     return text
+
+
+def inject_cxx20_runtime_hook(text: str) -> str:
+    """Ensure the torch ninja/spawn C++20 sanitizer is present in setup.py."""
+    if WIN_HOOK_BEGIN in text and WIN_HOOK_END in text:
+        return text
+    # Prefer right after a future import; else at the top.
+    future = "from __future__ import annotations\n"
+    if future in text:
+        return text.replace(future, future + "\n" + WIN_CXX20_HOOK + "\n", 1)
+    return WIN_CXX20_HOOK + "\n" + text
 
 
 def _ensure_zc_preprocessor(text: str) -> str:
@@ -208,26 +376,28 @@ def _rewrite_unix_only_args_for_msvc(text: str) -> str:
 
 
 def patch_windows_extension_setup(setup_py: Path) -> bool:
-    """Rewrite extension setup.py: every c++17 → c++20, ensure /Zc:preprocessor.
+    """Rewrite extension setup.py: every c++17 → c++20, Zc flags, runtime hook.
 
-    Idempotent only when no c++17 remains. Returns True if the file changed.
-    No-op on non-Windows hosts.
+    Idempotent only when no c++17 remains and the hook is present. Returns True if
+    the file changed. No-op on non-Windows hosts.
     """
     if host.os_family() != "windows":
         return False
     if not setup_py.is_file():
         return False
     text = setup_py.read_text(encoding="utf-8")
-    # Never skip while c++17 is still present (old early-return could).
+    hook_ok = WIN_HOOK_BEGIN in text and WIN_HOOK_END in text
     if (
         not setup_still_has_cxx17(text)
         and WIN_SETUP_MARKER in text
         and "/Zc:preprocessor" in text
+        and hook_ok
     ):
         return False
     original = text
     text = rewrite_setup_cxx_flags(text)
-    if text == original and not setup_still_has_cxx17(text):
+    text = inject_cxx20_runtime_hook(text)
+    if text == original and not setup_still_has_cxx17(text) and hook_ok:
         return False
     if WIN_SETUP_MARKER not in text:
         text = WIN_SETUP_MARKER + text
@@ -239,8 +409,8 @@ def patch_windows_extension_setup(setup_py: Path) -> bool:
 def ensure_windows_extension_setup(setup_py: Path) -> None:
     """Patch setup.py on Windows and refuse to build if any c++17 remains.
 
-    FlexGEMM's hardcoded /std:c++17 overrides env c++20 (cl D9025). Pip must not
-    run until the file is clean.
+    FlexGEMM's hardcoded /std:c++17 and older torch ninja defaults both inject
+    C++17 onto the same cl line as C++20 (D9025). Pip must not run until clean.
     """
     if host.os_family() != "windows":
         return
@@ -254,12 +424,67 @@ def ensure_windows_extension_setup(setup_py: Path) -> None:
             "Refusing to build — later /std:c++17 would override C++20 (cl D9025) "
             "and break PyTorch headers. See docs/WINDOWS.md."
         )
+    if WIN_HOOK_BEGIN not in text:
+        raise SystemExit(
+            f"{setup_py} is missing the C++20 runtime hook that strips torch's "
+            "c++17 ninja flags. See docs/WINDOWS.md."
+        )
     if "/Zc:preprocessor" not in text and "/std:c++20" in text:
         raise SystemExit(
             f"{setup_py} is missing /Zc:preprocessor (required by CCCL on "
             "CUDA 12.8+/13.x). See docs/WINDOWS.md."
         )
     print(f"Verified no c++17 in {setup_py}", flush=True)
+
+
+def patch_torch_cpp_extension_cxx20(py: Path) -> bool:
+    """Rewrite c++17 → c++20 in this venv's torch.utils.cpp_extension.
+
+    Torch ≤2.11 hardcodes `-std=c++17` / `/std:c++17` into the Windows ninja rules.
+    That lands on the same cl/nvcc line as our C++20 flags (D9025). Idempotent.
+    """
+    if host.os_family() != "windows":
+        return False
+    probe = subprocess.run(
+        [str(py), "-c", "import torch.utils.cpp_extension as m; print(m.__file__)"],
+        capture_output=True, text=True, check=False,
+    )
+    if probe.returncode != 0:
+        raise SystemExit(
+            f"Cannot import torch.utils.cpp_extension with {py}:\n{probe.stderr}"
+        )
+    path = Path(probe.stdout.strip())
+    text = path.read_text(encoding="utf-8")
+    if "c++17" not in text:
+        print(f"torch cpp_extension already c++20-only: {path}", flush=True)
+        return False
+    path.write_text(text.replace("c++17", "c++20"), encoding="utf-8")
+    print(f"Patched torch cpp_extension c++17→c++20: {path}", flush=True)
+    return True
+
+
+def clean_extension_build_artifacts(target: Path) -> None:
+    """Remove stale setuptools/ninja outputs so old /std:c++17 rules cannot linger."""
+    removed = False
+    for name in ("build", "dist", ".eggs"):
+        path = target / name
+        if path.is_dir():
+            shutil.rmtree(path)
+            removed = True
+            print(f"Removed stale build dir {path}", flush=True)
+    for path in target.glob("*.egg-info"):
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+        removed = True
+        print(f"Removed {path}", flush=True)
+    for path in target.rglob("build.ninja"):
+        path.unlink()
+        removed = True
+        print(f"Removed {path}", flush=True)
+    if not removed:
+        print(f"No stale build artifacts under {target}", flush=True)
 
 
 def extension_build_env() -> dict[str, str]:
@@ -327,12 +552,17 @@ def install_extension(py: Path, name: str, url: str, ref: str | None,
             run(["git", "checkout", ref], cwd=target)
     setup_py = target / "setup.py"
     ensure_windows_extension_setup(setup_py)
+    clean_extension_build_artifacts(target)
     uv = shutil.which("uv")
-    run([uv, "pip", "install", "--python", str(py), "--no-build-isolation", str(target)],
+    run([uv, "pip", "install", "--python", str(py), "--no-build-isolation",
+         "--force-reinstall", "--no-deps", str(target)],
         env=extension_build_env())
 
 
 def install_extensions(py: Path) -> None:
+    if host.os_family() == "windows":
+        print("\nPatching torch.utils.cpp_extension for C++20...", flush=True)
+        patch_torch_cpp_extension_cxx20(py)
     work = VENDOR / ".i2l-build"
     work.mkdir(parents=True, exist_ok=True)
     for name, url, ref in EXTENSIONS:
@@ -350,10 +580,12 @@ def install_extensions(py: Path) -> None:
     if o_voxel.is_dir():
         print("\nBuilding o-voxel...", flush=True)
         ensure_windows_extension_setup(o_voxel / "setup.py")
+        clean_extension_build_artifacts(o_voxel)
         uv = shutil.which("uv")
         try:
             run([uv, "pip", "install", "--python", str(py), "--no-build-isolation",
-                 str(o_voxel)], env=extension_build_env())
+                 "--force-reinstall", "--no-deps", str(o_voxel)],
+                env=extension_build_env())
         except subprocess.CalledProcessError as exc:
             raise SystemExit(f"Failed to build o-voxel: {exc}") from exc
 
