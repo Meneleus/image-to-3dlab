@@ -92,6 +92,10 @@ CLI pattern as on Mac, different vendor tree under the hood.
 What it does: clones `microsoft/TRELLIS.2` → `vendor/trellis2-cuda/`, installs CUDA
 PyTorch + deps, compiles nvdiffrast / cumesh / flexgemm / o-voxel. **No weights yet.**
 
+On Windows the bootstrap **sets the MSVC/CUDA compile flags for you** — you should not
+need to hand-set `CXXFLAGS` / `NVCC_FLAGS`. See [CUDA extension builds](#cuda-extension-builds-trellis2)
+below if a compile still fails.
+
 Then in the viewer pick **TRELLIS.2** → Generate. First run downloads ~14 GB
 (`microsoft/TRELLIS.2-4B`). Before that: request gated DINOv3 access and run
 `hf auth login`.
@@ -148,6 +152,36 @@ If Blender is installed somewhere unusual:
 $env:I2L_BLENDER = "C:\Path\To\blender.exe"
 ```
 
+## CUDA extension builds (TRELLIS.2)
+
+TRELLIS.2 compiles several CUDA packages (CuMesh, FlexGEMM, nvdiffrast, o-voxel). On
+Windows that needs:
+
+1. **CUDA Toolkit 12.8+** (13.x is fine) with `nvcc` on PATH or under the usual
+   `NVIDIA GPU Computing Toolkit\CUDA\v*` folder.
+2. **Visual Studio 2022** (17) or **Visual Studio 18** with the **Desktop development
+   with C++** workload (MSVC 14.3x / 14.5x). Open the **x64 Native Tools** prompt, or
+   run from a shell where `cl` works, before bootstrapping.
+3. A driver new enough for that toolkit (and for your GPU — **Blackwell / sm_120**
+   needs a recent driver plus a toolkit that knows `sm_120`).
+
+`scripts/bootstrap_trellis_cuda.py` applies these flags automatically on Windows:
+
+| Variable | Value | Why |
+|---|---|---|
+| `DISTUTILS_USE_SDK` | `1` | Lets distutils find the VS C++ toolchain |
+| `CXXFLAGS` / `CL` | `/std:c++20 /Zc:preprocessor /Zc:__cplusplus` | Current PyTorch headers need C++20; CCCL (CUDA 12.8+/13.x) needs the conformant preprocessor |
+| `NVCC_FLAGS` / `NVCC_PREPEND_FLAGS` | `-std=c++20 … -Xcompiler=/Zc:preprocessor …` | Same flags for host code compiled via `nvcc` |
+
+It also **rewrites** FlexGEMM / CuMesh / o-voxel `setup.py` lists that still hardcode
+`/std:c++17` without `/Zc:preprocessor` — env alone is not enough for those packages.
+
+You do **not** need to set those variables by hand for a normal bootstrap. If you are
+debugging a failed build outside the script, the table above is what to use.
+
+**Blackwell (sm_120):** if nvcc builds for the wrong arch, set
+`TORCH_CUDA_ARCH_LIST=12.0` in the same shell before re-running the bootstrap.
+
 ## Common snags
 
 | Symptom | Fix |
@@ -156,6 +190,7 @@ $env:I2L_BLENDER = "C:\Path\To\blender.exe"
 | PyTorch stays on CPU | Re-run the installer, or install from the URL `python -m image_to_3dlab.host torch-index` prints. |
 | Pixal3D refuses the prebuilt | Update the driver to **575+**. |
 | TRELLIS/Hunyuan/SF3D compile fails | Install VS Build Tools (C++) + a CUDA toolkit matching PyTorch; reopen the “x64 Native Tools” shell and re-run the bootstrap. |
+| CCCL / “traditional preprocessor” / C++17 vs C++20 on FlexGEMM | Re-run `bootstrap_trellis_cuda.py` from this repo revision — it patches setup.py and sets the flags. See [above](#cuda-extension-builds-trellis2). |
 | TRELLIS fails only on Windows | Microsoft tests Linux; try the same bootstrap on Linux NVIDIA, or WSL2 with GPU. |
 | Generate Image is very slow / CPU | `nvidia-smi` must see the card; update the driver and reopen the terminal. |
 | Finish cannot find Blender | Install from blender.org, or set `I2L_BLENDER`. |

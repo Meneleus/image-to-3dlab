@@ -1,5 +1,6 @@
 # Thin PowerShell wrapper for official TRELLIS.2 CUDA setup on Windows.
 # Prefer Setup & Status in the viewer. Full detail: docs\WINDOWS.md
+# The Python script sets MSVC/CUDA C++20 flags — no hand-set CXXFLAGS needed.
 #
 #   .\scripts\bootstrap_trellis_cuda.ps1
 #   .\scripts\bootstrap_trellis_cuda.ps1 -Yes

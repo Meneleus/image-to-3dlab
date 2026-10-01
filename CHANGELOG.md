@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - SF3D and viewer hints no longer tell Windows/Linux users to run the Mac-only
   `bootstrap_macos.sh`.
+- **TRELLIS.2 CUDA bootstrap on Windows** sets `DISTUTILS_USE_SDK`, C++20, and
+  `/Zc:preprocessor` (and rewrites FlexGEMM / CuMesh / o-voxel `setup.py` flags) so
+  CUDA 12.8+/13.x + modern MSVC builds without hand-set `CXXFLAGS`.
 
 ## [0.3.6] - 2026-10-01
 

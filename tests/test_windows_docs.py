@@ -18,6 +18,13 @@ def test_windows_guide_exists_and_names_the_working_routes():
     assert "first-class" in text or "in the lab" in text.lower()
 
 
+def test_windows_guide_documents_trellis_cuda_compile_flags():
+    text = (REPO / "docs" / "WINDOWS.md").read_text()
+    for needle in ("DISTUTILS_USE_SDK", "/std:c++20", "/Zc:preprocessor",
+                   "FlexGEMM", "sm_120", "Blackwell", "CUDA Toolkit"):
+        assert needle in text, needle
+
+
 def test_powershell_cuda_wrappers_exist():
     for name in ("bootstrap_trellis_cuda.ps1", "bootstrap_hunyuan_cuda.ps1"):
         text = (REPO / "scripts" / name).read_text()

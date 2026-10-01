@@ -10,6 +10,10 @@ Microsoft's README only claims Linux testing. On Windows the same steps run when
 CUDA toolkit and Visual Studio C++ build tools are present; if an extension fails to
 compile, this says so and stops without claiming success.
 
+On Windows this also applies the MSVC/CUDA flags modern toolchains need (C++20,
+`/Zc:preprocessor`) — both as process env and by rewriting hardcoded C++17 lists in
+extension `setup.py` files (FlexGEMM ignores CXXFLAGS alone).
+
 Weights (~14 GB TRELLIS.2-4B + gated DINOv3) are *not* fetched here — they arrive on
 the first generation run, same as the Mac bootstrap. BRIA RMBG-2.0 is never installed.
 
@@ -23,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -54,10 +59,20 @@ BASIC = [
     "fast_simplification",
 ]
 
+# CUDA 12.8+/13.x CCCL + current PyTorch headers need C++20 and MSVC's conformant
+# preprocessor. FlexGEMM/CuMesh hardcode C++17 without /Zc:preprocessor, so env
+# alone is not enough — see patch_windows_extension_setup.
+WIN_CXXFLAGS = "/std:c++20 /Zc:preprocessor /Zc:__cplusplus"
+WIN_NVCC_FLAGS = (
+    "-std=c++20 -allow-unsupported-compiler "
+    "-Xcompiler=/std:c++20 -Xcompiler=/Zc:preprocessor -Xcompiler=/Zc:__cplusplus"
+)
+WIN_SETUP_MARKER = "# image-to-3dlab: windows cxx20 + Zc:preprocessor\n"
+
 
 def announcement() -> str:
     family = host.os_family()
-    return "\n".join([
+    lines = [
         "",
         "About to install:",
         "",
@@ -72,8 +87,136 @@ def announcement() -> str:
         "",
         "  note:    Microsoft tests TRELLIS.2 on Linux. Windows needs the CUDA",
         "           toolkit and Visual Studio C++ build tools for the extensions.",
-        "",
-    ])
+    ]
+    if family == "windows":
+        lines += [
+            "           This script sets DISTUTILS_USE_SDK, C++20, and",
+            "           /Zc:preprocessor for CUDA 12.8+/13.x + modern MSVC.",
+        ]
+    lines.append("")
+    return "\n".join(lines)
+
+
+def windows_cuda_build_env(base: dict[str, str] | None = None) -> dict[str, str]:
+    """Env for building CUDA extensions on Windows with CUDA 12.8+/13.x + MSVC.
+
+    Sets DISTUTILS_USE_SDK (so distutils finds the VS toolchain), C++20, and the
+    conformant preprocessor flag CCCL requires. No-op on non-Windows hosts.
+    """
+    env = dict(base if base is not None else os.environ)
+    if host.os_family() != "windows":
+        return env
+    env["DISTUTILS_USE_SDK"] = "1"
+    env["CXXFLAGS"] = WIN_CXXFLAGS
+    env["CL"] = WIN_CXXFLAGS
+    env["NVCC_FLAGS"] = WIN_NVCC_FLAGS
+    env["NVCC_PREPEND_FLAGS"] = WIN_NVCC_FLAGS
+    return env
+
+
+def _bump_std_flags(text: str) -> str:
+    """Rewrite hardcoded C++17 compile flags to C++20 (MSVC and nvcc spellings)."""
+    for old, new in (
+        ('"/std:c++17"', '"/std:c++20"'),
+        ("'/std:c++17'", "'/std:c++20'"),
+        ('"-std=c++17"', '"-std=c++20"'),
+        ("'-std=c++17'", "'-std=c++20'"),
+        ('"-Xcompiler=/std:c++17"', '"-Xcompiler=/std:c++20"'),
+        ("'-Xcompiler=/std:c++17'", "'-Xcompiler=/std:c++20'"),
+    ):
+        text = text.replace(old, new)
+    return text
+
+
+def _ensure_zc_preprocessor(text: str) -> str:
+    """Add /Zc:preprocessor next to existing /Zc:__cplusplus entries if missing."""
+    if "/Zc:preprocessor" in text:
+        return text
+    text = text.replace(
+        '"/Zc:__cplusplus"',
+        '"/Zc:__cplusplus", "/Zc:preprocessor"',
+    )
+    text = text.replace(
+        "'/Zc:__cplusplus'",
+        "'/Zc:__cplusplus', '/Zc:preprocessor'",
+    )
+    text = text.replace(
+        '"-Xcompiler=/Zc:__cplusplus"',
+        '"-Xcompiler=/Zc:__cplusplus", "-Xcompiler=/Zc:preprocessor"',
+    )
+    text = text.replace(
+        "'-Xcompiler=/Zc:__cplusplus'",
+        "'-Xcompiler=/Zc:__cplusplus', '-Xcompiler=/Zc:preprocessor'",
+    )
+    return text
+
+
+def _rewrite_unix_only_args_for_msvc(text: str) -> str:
+    """Turn unix-only cxx/nvcc lists (o-voxel) into MSVC-friendly Windows flags."""
+    if "/std:c++" in text:
+        return text
+    text = re.sub(
+        r'"cxx":\s*\[\s*"-O3",\s*"-std=c\+\+20"\s*\]',
+        '"cxx": ["/O2", "/std:c++20", "/EHsc", "/Zc:__cplusplus", "/Zc:preprocessor"]',
+        text,
+    )
+    text = re.sub(
+        r'"nvcc":\s*\[\s*"-O3",\s*"-std=c\+\+20"\s*\]\s*\+\s*cc_flag',
+        (
+            '"nvcc": ["-O3", "-std=c++20", "-Xcompiler=/std:c++20", '
+            '"-Xcompiler=/EHsc", "-Xcompiler=/Zc:__cplusplus", '
+            '"-Xcompiler=/Zc:preprocessor", "-allow-unsupported-compiler"] + cc_flag'
+        ),
+        text,
+    )
+    text = re.sub(
+        r'"nvcc":\s*\[\s*"-O3",\s*"-std=c\+\+20"\s*\]',
+        (
+            '"nvcc": ["-O3", "-std=c++20", "-Xcompiler=/std:c++20", '
+            '"-Xcompiler=/EHsc", "-Xcompiler=/Zc:__cplusplus", '
+            '"-Xcompiler=/Zc:preprocessor", "-allow-unsupported-compiler"]'
+        ),
+        text,
+    )
+    return text
+
+
+def patch_windows_extension_setup(setup_py: Path) -> bool:
+    """Rewrite extension setup.py compile flags for modern MSVC + CUDA 12.8+/13.x.
+
+    Bumps C++17 → C++20, adds `/Zc:preprocessor` (CCCL), and converts unix-only
+    flag lists to MSVC spellings when needed. Idempotent. Returns True if the file
+    changed. No-op on non-Windows hosts.
+    """
+    if host.os_family() != "windows":
+        return False
+    if not setup_py.is_file():
+        return False
+    text = setup_py.read_text(encoding="utf-8")
+    if WIN_SETUP_MARKER in text and "/std:c++20" in text and "/Zc:preprocessor" in text:
+        return False
+    original = text
+    text = _bump_std_flags(text)
+    text = _ensure_zc_preprocessor(text)
+    text = _rewrite_unix_only_args_for_msvc(text)
+    if text == original:
+        return False
+    if WIN_SETUP_MARKER not in text:
+        text = WIN_SETUP_MARKER + text
+    setup_py.write_text(text, encoding="utf-8")
+    print(f"Patched Windows CUDA flags in {setup_py}", flush=True)
+    return True
+
+
+def extension_build_env() -> dict[str, str]:
+    """Full env for a pip install of a CUDA extension (PATH/CUDA_HOME + Windows flags)."""
+    env = windows_cuda_build_env()
+    nvcc = host.find_nvcc()
+    if nvcc:
+        env["PATH"] = os.pathsep.join([str(Path(nvcc).parent), env.get("PATH", "")])
+        env.setdefault("CUDA_HOME", str(Path(nvcc).parent.parent))
+        env.setdefault("CUDA_PATH", str(Path(nvcc).parent.parent))
+    return env
 
 
 def run(cmd: list[str], *, cwd: Path | None = None, env: dict | None = None) -> None:
@@ -128,14 +271,11 @@ def install_extension(py: Path, name: str, url: str, ref: str | None,
         run(cmd)
         if ref:
             run(["git", "checkout", ref], cwd=target)
+    setup_py = target / "setup.py"
+    patch_windows_extension_setup(setup_py)
     uv = shutil.which("uv")
-    env = dict(os.environ)
-    nvcc = host.find_nvcc()
-    if nvcc:
-        env["PATH"] = os.pathsep.join([str(Path(nvcc).parent), env.get("PATH", "")])
-        env.setdefault("CUDA_HOME", str(Path(nvcc).parent.parent))
     run([uv, "pip", "install", "--python", str(py), "--no-build-isolation", str(target)],
-        env=env)
+        env=extension_build_env())
 
 
 def install_extensions(py: Path) -> None:
@@ -155,15 +295,11 @@ def install_extensions(py: Path) -> None:
     o_voxel = VENDOR / "o-voxel"
     if o_voxel.is_dir():
         print("\nBuilding o-voxel...", flush=True)
+        patch_windows_extension_setup(o_voxel / "setup.py")
         uv = shutil.which("uv")
-        env = dict(os.environ)
-        nvcc = host.find_nvcc()
-        if nvcc:
-            env["PATH"] = os.pathsep.join([str(Path(nvcc).parent), env.get("PATH", "")])
-            env.setdefault("CUDA_HOME", str(Path(nvcc).parent.parent))
         try:
             run([uv, "pip", "install", "--python", str(py), "--no-build-isolation",
-                 str(o_voxel)], env=env)
+                 str(o_voxel)], env=extension_build_env())
         except subprocess.CalledProcessError as exc:
             raise SystemExit(f"Failed to build o-voxel: {exc}") from exc
 
@@ -174,6 +310,7 @@ def try_flash_attn(py: Path) -> None:
     done = subprocess.run(
         [uv, "pip", "install", "--python", str(py), "flash-attn==2.7.3",
          "--no-build-isolation"],
+        env=extension_build_env(),
         check=False,
     )
     if done.returncode != 0:
