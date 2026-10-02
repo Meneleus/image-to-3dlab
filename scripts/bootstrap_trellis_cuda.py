@@ -77,11 +77,13 @@ WIN_SETUP_MARKER = "# image-to-3dlab: windows cxx20 + Zc:preprocessor\n"
 WIN_HOOK_BEGIN = "# --- image-to-3dlab: force C++20 on cl/nvcc (begin) ---\n"
 WIN_HOOK_END = "# --- image-to-3dlab: force C++20 on cl/nvcc (end) ---\n"
 WIN_HOOK_ENSURE_NAME = "_i2l_ensure_msvc_cccl_flags"
+WIN_HOOK_NVCC_SANITIZE_NAME = "_i2l_sanitize_nvcc_flags"
 _CXX17_IN_SETUP = re.compile(r"c\+\+17", re.IGNORECASE)
 
 # Flags every CUDAExtension must get on Windows (CCCL + current PyTorch headers).
 WIN_MSVC_CXX_FLAGS = ("/std:c++20", "/Zc:preprocessor", "/Zc:__cplusplus")
 WIN_MSVC_NVCC_FLAGS = (
+    "-std=c++20",
     "-Xcompiler=/std:c++20",
     "-Xcompiler=/Zc:preprocessor",
     "-Xcompiler=/Zc:__cplusplus",
@@ -89,7 +91,7 @@ WIN_MSVC_NVCC_FLAGS = (
 
 # Injected into *every* extension setup.py the bootstrap builds. Sanitizes c++17,
 # appends CCCL flags to cxx/nvcc lists (nvdiffrast/nvdiffrec have none upstream),
-# and strips mixed standards from ninja/spawn command lines.
+# wraps bare MSVC tokens on nvcc lines, and strips mixed standards from ninja/spawn.
 WIN_CXX20_HOOK = '''\
 # --- image-to-3dlab: force C++20 on cl/nvcc (begin) ---
 def _i2l_sanitize_std_flags(flags):
@@ -134,17 +136,81 @@ def _i2l_sanitize_std_flags(flags):
         result.append(xcomp_std)
     return result
 
+def _i2l_sanitize_nvcc_flags(flags):
+    """nvcc must never see bare MSVC /std: or /Zc: (treated as extra input files)."""
+    if not flags:
+        return flags
+    result = []
+    want_device_std = want_xcomp_std = False
+    xcomp_zc = []
+    i, n = 0, len(flags)
+    while i < n:
+        f = flags[i]
+        if not isinstance(f, str):
+            result.append(f)
+            i += 1
+            continue
+        f = f.replace("c++17", "c++20").replace("C++17", "c++20")
+        if f.startswith("/std:"):
+            want_device_std = True
+            want_xcomp_std = True
+            i += 1
+            continue
+        if f.startswith("/Zc:"):
+            wrapped = "-Xcompiler=" + f
+            if wrapped not in xcomp_zc:
+                xcomp_zc.append(wrapped)
+            i += 1
+            continue
+        if f.startswith("-std=") and "c++" in f.lower():
+            want_device_std = True
+            i += 1
+            continue
+        if f.startswith(("-Xcompiler=/std:", "-Xcompiler,/std:")):
+            want_xcomp_std = True
+            i += 1
+            continue
+        if f.startswith(("-Xcompiler=/Zc:", "-Xcompiler,/Zc:")):
+            wrapped = f.replace("-Xcompiler,", "-Xcompiler=", 1)
+            if wrapped not in xcomp_zc:
+                xcomp_zc.append(wrapped)
+            i += 1
+            continue
+        if f == "-Xcompiler" and i + 1 < n and isinstance(flags[i + 1], str):
+            nxt = flags[i + 1].replace("c++17", "c++20").replace("C++17", "c++20")
+            if nxt.startswith("/std:"):
+                want_xcomp_std = True
+                i += 2
+                continue
+            if nxt.startswith("/Zc:"):
+                wrapped = "-Xcompiler=" + nxt
+                if wrapped not in xcomp_zc:
+                    xcomp_zc.append(wrapped)
+                i += 2
+                continue
+        result.append(f)
+        i += 1
+    if want_device_std:
+        result.append("-std=c++20")
+    if want_xcomp_std:
+        result.append("-Xcompiler=/std:c++20")
+    for z in xcomp_zc:
+        if z not in result:
+            result.append(z)
+    return result
+
 def _i2l_ensure_msvc_cccl_flags(extra_compile_args):
     """Append /std:c++20 + /Zc:preprocessor to every CUDAExtension on Windows."""
     cxx_need = ["/std:c++20", "/Zc:preprocessor", "/Zc:__cplusplus"]
     nvcc_need = [
+        "-std=c++20",
         "-Xcompiler=/std:c++20",
         "-Xcompiler=/Zc:preprocessor",
         "-Xcompiler=/Zc:__cplusplus",
     ]
     if isinstance(extra_compile_args, dict):
         cxx = _i2l_sanitize_std_flags(list(extra_compile_args.get("cxx") or []))
-        nvcc = _i2l_sanitize_std_flags(list(extra_compile_args.get("nvcc") or []))
+        nvcc = _i2l_sanitize_nvcc_flags(list(extra_compile_args.get("nvcc") or []))
         for flag in cxx_need:
             if flag not in cxx:
                 cxx.append(flag)
@@ -176,9 +242,12 @@ def _i2l_force_cxx20():
         for idx in range(1, min(5, len(args))):
             if args[idx] is not None:
                 args[idx] = _i2l_sanitize_std_flags(list(args[idx]))
-        for key in ("cflags", "post_cflags", "cuda_cflags", "cuda_post_cflags"):
+        for key in ("cflags", "post_cflags"):
             if kwargs.get(key) is not None:
                 kwargs[key] = _i2l_sanitize_std_flags(list(kwargs[key]))
+        for key in ("cuda_cflags", "cuda_post_cflags"):
+            if kwargs.get(key) is not None:
+                kwargs[key] = _i2l_sanitize_nvcc_flags(list(kwargs[key]))
         return _orig_write(*args, **kwargs)
     _tce._write_ninja_file = _write_ninja_file
     _orig_be = _tce.BuildExtension.build_extensions
@@ -193,7 +262,12 @@ def _i2l_force_cxx20():
             _spawn = compiler.spawn
             def spawn(cmd, *a, **k):
                 if isinstance(cmd, (list, tuple)):
-                    cmd = _i2l_sanitize_std_flags(list(cmd))
+                    cmd = list(cmd)
+                    head = " ".join(str(c).lower() for c in cmd[:3])
+                    if "nvcc" in head:
+                        cmd = _i2l_sanitize_nvcc_flags(cmd)
+                    else:
+                        cmd = _i2l_sanitize_std_flags(cmd)
                 return _spawn(cmd, *a, **k)
             compiler.spawn = spawn
             compiler._i2l_cxx20_wrapped = True
@@ -252,6 +326,7 @@ def setup_has_cccl_ensure_hook(text: str) -> bool:
         WIN_HOOK_BEGIN in text
         and WIN_HOOK_END in text
         and WIN_HOOK_ENSURE_NAME in text
+        and WIN_HOOK_NVCC_SANITIZE_NAME in text
         and "/Zc:preprocessor" in text
         and "/std:c++20" in text
     )
@@ -261,7 +336,8 @@ def sanitize_std_flags(flags: list) -> list:
     """Replace c++17→c++20; keep at most one /std:, -std=c++*, -Xcompiler=/std:.
 
     Pure helper (same rules as the setup.py runtime hook). Compile lines must never
-    carry both c++17 and c++20.
+    carry both c++17 and c++20. For *host* (cl) lines only — use
+    ``sanitize_nvcc_flags`` for nvcc / cuda_cflags.
     """
     if not flags:
         return flags
@@ -304,6 +380,74 @@ def sanitize_std_flags(flags: list) -> list:
     return result
 
 
+def sanitize_nvcc_flags(flags: list) -> list:
+    """Wrap bare MSVC /std: and /Zc: for nvcc; keep -std=c++20 for device code.
+
+    Bare ``/Zc:…`` / ``/std:…`` on an nvcc command line are treated as extra
+    input files (``nvcc fatal: A single input file is required…``).
+    """
+    if not flags:
+        return flags
+    result: list = []
+    want_device_std = want_xcomp_std = False
+    xcomp_zc: list[str] = []
+    i, n = 0, len(flags)
+    while i < n:
+        f = flags[i]
+        if not isinstance(f, str):
+            result.append(f)
+            i += 1
+            continue
+        f = f.replace("c++17", "c++20").replace("C++17", "c++20")
+        if f.startswith("/std:"):
+            want_device_std = True
+            want_xcomp_std = True
+            i += 1
+            continue
+        if f.startswith("/Zc:"):
+            wrapped = f"-Xcompiler={f}"
+            if wrapped not in xcomp_zc:
+                xcomp_zc.append(wrapped)
+            i += 1
+            continue
+        if f.startswith("-std=") and "c++" in f.lower():
+            want_device_std = True
+            i += 1
+            continue
+        if f.startswith(("-Xcompiler=/std:", "-Xcompiler,/std:")):
+            want_xcomp_std = True
+            i += 1
+            continue
+        if f.startswith(("-Xcompiler=/Zc:", "-Xcompiler,/Zc:")):
+            wrapped = f.replace("-Xcompiler,", "-Xcompiler=", 1)
+            if wrapped not in xcomp_zc:
+                xcomp_zc.append(wrapped)
+            i += 1
+            continue
+        if f == "-Xcompiler" and i + 1 < n and isinstance(flags[i + 1], str):
+            nxt = flags[i + 1].replace("c++17", "c++20").replace("C++17", "c++20")
+            if nxt.startswith("/std:"):
+                want_xcomp_std = True
+                i += 2
+                continue
+            if nxt.startswith("/Zc:"):
+                wrapped = f"-Xcompiler={nxt}"
+                if wrapped not in xcomp_zc:
+                    xcomp_zc.append(wrapped)
+                i += 2
+                continue
+        result.append(f)
+        i += 1
+    if want_device_std:
+        result.append("-std=c++20")
+    if want_xcomp_std:
+        result.append("-Xcompiler=/std:c++20")
+    for z in xcomp_zc:
+        if z not in result:
+            result.append(z)
+    return result
+
+
 def ensure_msvc_cccl_flags(extra_compile_args: dict | list | None) -> dict | list:
     """Append /std:c++20 + /Zc:preprocessor to CUDAExtension args (testable mirror of hook)."""
     cxx_need = list(WIN_MSVC_CXX_FLAGS)
@@ -311,7 +455,7 @@ def ensure_msvc_cccl_flags(extra_compile_args: dict | list | None) -> dict | lis
     if isinstance(extra_compile_args, dict):
         out = dict(extra_compile_args)
         cxx = sanitize_std_flags(list(out.get("cxx") or []))
-        nvcc = sanitize_std_flags(list(out.get("nvcc") or []))
+        nvcc = sanitize_nvcc_flags(list(out.get("nvcc") or []))
         for flag in cxx_need:
             if flag not in cxx:
                 cxx.append(flag)

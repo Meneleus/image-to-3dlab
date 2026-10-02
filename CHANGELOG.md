@@ -52,6 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   C++20 / `/Zc:preprocessor` build env (same helpers as TRELLIS) before building
   `custom_rasterizer` / DifferentiableRenderer; non-editable install. Fixes torch
   refusing the build when a Visual C++ environment is already activated.
+- **Windows CUDA nvcc flag separation:** do not put bare MSVC `/Zc:` / `/std:` in
+  `CXXFLAGS` (they leak onto nvcc as fake input files). Setup.py runtime hook and
+  `sanitize_nvcc_flags` wrap host flags as `-Xcompiler=…` and keep `-std=c++20`
+  for device code — fixes Hunyuan `custom_rasterizer`
+  `nvcc fatal: A single input file is required…`.
 
 ## [0.3.6] - 2026-10-01
 

@@ -15,8 +15,12 @@ from pathlib import Path
 from image_to_3dlab import host
 
 WIN_CL_FLAGS = "/Zc:preprocessor /Zc:__cplusplus"
+# nvcc must never see bare /Zc: or /std: — those look like input files.
+# Host MSVC flags go through -Xcompiler=; device standard is -std=c++20.
 WIN_NVCC_FLAGS = (
     "-allow-unsupported-compiler "
+    "-std=c++20 "
+    "-Xcompiler=/std:c++20 "
     "-Xcompiler=/Zc:preprocessor -Xcompiler=/Zc:__cplusplus"
 )
 
@@ -24,7 +28,9 @@ WIN_NVCC_FLAGS = (
 def windows_cuda_build_env(base: dict[str, str] | None = None) -> dict[str, str]:
     """Env for building CUDA extensions on Windows with CUDA 12.8+/13.x + MSVC.
 
-    Sets DISTUTILS_USE_SDK and /Zc:preprocessor. Does *not* put /std:c++20 in CL.
+    Sets DISTUTILS_USE_SDK and host flags via ``CL`` only. Does *not* put bare
+    MSVC tokens in ``CXXFLAGS`` (torch/ninja often forward those to nvcc, which
+    then treats ``/Zc:…`` / ``/std:…`` as extra input files).
     No-op on non-Windows hosts.
     """
     env = dict(base if base is not None else os.environ)
@@ -32,7 +38,8 @@ def windows_cuda_build_env(base: dict[str, str] | None = None) -> dict[str, str]
         return env
     env["DISTUTILS_USE_SDK"] = "1"
     env["CL"] = WIN_CL_FLAGS
-    env["CXXFLAGS"] = WIN_CL_FLAGS
+    # Drop any caller/user CXXFLAGS that would leak bare /Zc or /std onto nvcc.
+    env.pop("CXXFLAGS", None)
     env["NVCC_FLAGS"] = WIN_NVCC_FLAGS
     env["NVCC_PREPEND_FLAGS"] = WIN_NVCC_FLAGS
     return env

@@ -113,14 +113,20 @@ def test_no_yes_without_terminal_refuses(monkeypatch):
 def test_windows_cuda_build_env_sets_zc_not_std(monkeypatch):
     """CL must not carry /std:c++20 — that races with torch under --use-local-env."""
     monkeypatch.setattr(boot.host, "os_family", lambda: "windows")
-    env = boot.windows_cuda_build_env({"PATH": "C:\\x", "CL": "/std:c++17 /something"})
+    env = boot.windows_cuda_build_env({
+        "PATH": "C:\\x",
+        "CL": "/std:c++17 /something",
+        "CXXFLAGS": "/Zc:preprocessor /std:c++17",
+    })
     assert env["DISTUTILS_USE_SDK"] == "1"
-    assert "/Zc:preprocessor" in env["CXXFLAGS"]
-    assert "/Zc:__cplusplus" in env["CXXFLAGS"]
+    assert "/Zc:preprocessor" in env["CL"]
     assert "/std:" not in env["CL"]
-    assert "/std:" not in env["CXXFLAGS"]
-    assert "-std=" not in env["NVCC_FLAGS"]
+    # CXXFLAGS must not carry bare MSVC flags — they leak into nvcc as fake inputs.
+    assert "CXXFLAGS" not in env
+    assert "-std=c++20" in env["NVCC_FLAGS"]
     assert "-Xcompiler=/Zc:preprocessor" in env["NVCC_FLAGS"]
+    assert "-Xcompiler=/std:c++20" in env["NVCC_FLAGS"]
+    assert "/Zc:preprocessor" not in env["NVCC_FLAGS"].replace("-Xcompiler=/Zc:preprocessor", "")
     assert env["NVCC_PREPEND_FLAGS"] == env["NVCC_FLAGS"]
 
 
@@ -143,6 +149,27 @@ def test_sanitize_std_flags_keeps_only_cxx20():
     assert out.count("-std=c++20") == 1
     assert out.count("-Xcompiler=/std:c++20") == 1
     assert "/O2" in out and "/EHsc" in out
+
+
+def test_sanitize_nvcc_flags_wraps_bare_msvc_tokens():
+    """Regression: Hunyuan custom_rasterizer nvcc saw bare /Zc and /std as inputs."""
+    mixed = [
+        "nvcc", "--expt-relaxed-constexpr",
+        "/Zc:preprocessor", "/Zc:__cplusplus",
+        "-gencode=arch=compute_120,code=sm_120",
+        "/std:c++20",
+        "-c", "rasterizer_gpu.cu", "-o", "rasterizer_gpu.o",
+    ]
+    out = boot.sanitize_nvcc_flags(mixed)
+    joined = " ".join(out)
+    assert "/Zc:preprocessor" not in joined.replace("-Xcompiler=/Zc:preprocessor", "")
+    assert "/Zc:__cplusplus" not in joined.replace("-Xcompiler=/Zc:__cplusplus", "")
+    assert "/std:c++20" not in joined.replace("-Xcompiler=/std:c++20", "")
+    assert "-Xcompiler=/Zc:preprocessor" in out
+    assert "-Xcompiler=/Zc:__cplusplus" in out
+    assert "-Xcompiler=/std:c++20" in out
+    assert "-std=c++20" in out
+    assert "rasterizer_gpu.cu" in out
 
 
 def test_ensure_msvc_cccl_flags_appends_to_sparse_nvdiffrast_args():

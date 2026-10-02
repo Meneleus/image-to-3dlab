@@ -7,11 +7,18 @@ from image_to_3dlab import windows_cuda_build as wcb
 
 def test_windows_cuda_build_env_sets_sdk_and_zc(monkeypatch):
     monkeypatch.setattr(wcb.host, "os_family", lambda: "windows")
-    env = wcb.windows_cuda_build_env({"PATH": "C:\\x", "CL": "/std:c++17"})
+    env = wcb.windows_cuda_build_env({
+        "PATH": "C:\\x",
+        "CL": "/std:c++17",
+        "CXXFLAGS": "/Zc:preprocessor",
+    })
     assert env["DISTUTILS_USE_SDK"] == "1"
     assert env["CL"] == wcb.WIN_CL_FLAGS
     assert "/std:" not in env["CL"]
     assert "/Zc:preprocessor" in env["CL"]
+    assert "CXXFLAGS" not in env
+    assert "-Xcompiler=/Zc:preprocessor" in env["NVCC_FLAGS"]
+    assert "-std=c++20" in env["NVCC_FLAGS"]
     assert env["NVCC_PREPEND_FLAGS"] == wcb.WIN_NVCC_FLAGS
 
 

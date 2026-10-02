@@ -172,7 +172,7 @@ o-voxel** — every `setup.py` the bootstrap installs). On Windows that needs:
 
 | Step | What it does |
 |---|---|
-| Env | `DISTUTILS_USE_SDK=1`, `CL`/`CXXFLAGS` = `/Zc:preprocessor /Zc:__cplusplus` only (no `/std:` in env) |
+| Env | `DISTUTILS_USE_SDK=1`, `CL` = `/Zc:preprocessor /Zc:__cplusplus` only (no `/std:` in env; no bare MSVC flags in `CXXFLAGS` — those leak into nvcc) |
 | `setup.py` rewrite | Every extension: `c++17` → `c++20`; inject MSVC CCCL flags into known shapes (incl. nvdiffrast’s warning-only Windows list) |
 | Runtime hook | **Same hook for every package**: appends `/std:c++20` + `/Zc:preprocessor` to `cxx`/`nvcc`, sanitizes ninja/spawn so 17 and 20 never mix |
 | Torch patch | Rewrites `c++17` → `c++20` inside this venv’s `torch/utils/cpp_extension.py` (older wheels hardcode `-std=c++17` into ninja) |
@@ -207,6 +207,7 @@ Clear stale builds: delete `vendor\trellis2-cuda\.i2l-build\FlexGEMM` (or at lea
 | o-voxel MSVC `C2398` / `C3688` (`…d` float suffix) / `C4838` | Pull latest; bootstrap runs `patch_ovoxel_msvc_narrowing.py`. Wipe `vendor\trellis2-cuda\o-voxel\build` and re-run. |
 | flash-attn fails with `No module named 'psutil'` | Fixed: bootstrap installs `psutil` into the TRELLIS venv before the optional flash-attn build (`--no-build-isolation`). Still soft-fails to SDPA if the CUDA extension itself will not compile. Re-run bootstrap (or just let it retry the flash-attn step). |
 | Hunyuan `custom_rasterizer`: VC env active but `DISTUTILS_USE_SDK` not set | Fixed: Hunyuan bootstrap uses the same Windows CUDA build env as TRELLIS (`DISTUTILS_USE_SDK=1`, `/Zc:preprocessor`). Pull latest and re-run from an x64 Native Tools shell. |
+| Hunyuan / TRELLIS: `nvcc fatal: A single input file is required` with `/Zc:` or `/std:c++20` on the nvcc line | Bare MSVC host flags reached nvcc. Pull latest (nvcc sanitizer wraps them as `-Xcompiler=…`; env no longer puts them in `CXXFLAGS`). Wipe the extension `build\` folder and re-run. |
 | TRELLIS fails only on Windows | Microsoft tests Linux; try the same bootstrap on Linux NVIDIA, or WSL2 with GPU. |
 | Generate Image is very slow / CPU | `nvidia-smi` must see the card; update the driver and reopen the terminal. |
 | Finish cannot find Blender | Install from blender.org, or set `I2L_BLENDER`. |
