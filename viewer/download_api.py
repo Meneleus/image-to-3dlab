@@ -33,8 +33,6 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "viewer"))
 sys.path.insert(0, str(REPO))
 
-from image_to_3dlab import cuda_routes, processes  # noqa: E402
-from image_to_3dlab.host import NVIDIA, host_platform  # noqa: E402
 from backend_catalog import (  # noqa: E402
     BY_ID,
     HF_HUB_DIR,
@@ -43,6 +41,10 @@ from backend_catalog import (  # noqa: E402
     runs_on_phrase,
     venv_python,
 )
+
+from image_to_3dlab import cuda_routes, processes  # noqa: E402
+from image_to_3dlab.hf_hub_env import apply_windows_hf_hub_env  # noqa: E402
+from image_to_3dlab.host import NVIDIA, host_platform  # noqa: E402
 
 POLL_SECONDS = 2.0
 STALL_SECONDS = 90.0
@@ -335,10 +337,12 @@ def _run(run: DownloadRun) -> None:
     try:
         run.process = subprocess.Popen(
             run.command, cwd=str(REPO),
-            env={**os.environ, "PYTHONUNBUFFERED": "1",
-                 # The bars are unreadable in a browser and the size watcher is the real
-                 # progress signal, so ask the downloader not to draw them at all.
-                 "HF_HUB_DISABLE_PROGRESS_BARS": "1"},
+            env=apply_windows_hf_hub_env({
+                **os.environ, "PYTHONUNBUFFERED": "1",
+                # The bars are unreadable in a browser and the size watcher is the real
+                # progress signal, so ask the downloader not to draw them at all.
+                "HF_HUB_DISABLE_PROGRESS_BARS": "1",
+            }),
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0,
             # Its own process group, so cancelling kills the downloader's children too.
             **processes.group_popen_kwargs(),

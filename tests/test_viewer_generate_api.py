@@ -195,6 +195,13 @@ def test_job_env_drops_backend_selection_keys(monkeypatch):
     assert env["SOME_UNRELATED_VAR"] == "kept"  # everything else is inherited
 
 
+def test_job_env_disables_hf_symlinks_on_windows(monkeypatch):
+    monkeypatch.setattr("image_to_3dlab.hf_hub_env.host.os_family", lambda: "windows")
+    monkeypatch.delenv("HF_HUB_DISABLE_SYMLINKS", raising=False)
+    env = api._job_env()
+    assert env["HF_HUB_DISABLE_SYMLINKS"] == "1"
+
+
 def test_human_bytes_rounds():
     assert api._human_bytes(0) == "0 B"
     assert api._human_bytes(1023) == "1023 B"

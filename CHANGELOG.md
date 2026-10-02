@@ -89,6 +89,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (Pixal `cut_out`, Hunyuan generate) prepends `torch\\lib` for this process
   and calls `onnxruntime.preload_dlls()` so `cudnn64_9.dll` is found without
   a User PATH change.
+- **Windows Hugging Face cache:** Generate jobs, Setup downloads, and Hunyuan
+  CUDA CLI/bootstrap set `HF_HUB_DISABLE_SYMLINKS=1` so hub downloads do not
+  need symlink privilege (`WinError 1314` without Developer Mode).
 
 ## [0.3.6] - 2026-10-01
 

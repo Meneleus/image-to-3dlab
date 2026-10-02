@@ -29,7 +29,8 @@ def test_windows_guide_documents_trellis_cuda_compile_flags():
                    "patch_sf3d_windows_cuda_ext", "texture_baker", "C1189",
                    "pymeshlab", "onnxruntime-gpu", "cudnn64_9", "preload_dlls",
                    "No module named 'bpy'", "shape-only", "mesh_inpaint_processor",
-                   "functional_tensor", "patch_basicsr_functional_tensor"):
+                   "functional_tensor", "patch_basicsr_functional_tensor",
+                   "HF_HUB_DISABLE_SYMLINKS", "WinError 1314"):
         assert needle in text, needle
 
 

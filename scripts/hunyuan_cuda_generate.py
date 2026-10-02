@@ -25,6 +25,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from image_to_3dlab.cuda_routes import HUNYUAN_CUDA
+from image_to_3dlab.hf_hub_env import ensure_process_windows_hf_hub_env
 from image_to_3dlab.matte import prepare_onnxruntime_cuda
 
 VENDOR = HUNYUAN_CUDA
@@ -93,6 +94,8 @@ def shape_model_path(model: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    # Paint may hf_hub_download into ~/.cache/huggingface; WinError 1314 without this.
+    ensure_process_windows_hf_hub_env()
     if not (VENDOR / "hy3dshape").is_dir():
         raise SystemExit(
             f"Hunyuan CUDA checkout missing at {VENDOR}. "

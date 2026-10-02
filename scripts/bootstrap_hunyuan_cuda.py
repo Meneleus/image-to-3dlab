@@ -246,6 +246,9 @@ def install_code(py: Path) -> None:
 
 
 def install_weights() -> None:
+    from image_to_3dlab.hf_hub_env import ensure_process_windows_hf_hub_env
+
+    ensure_process_windows_hf_hub_env()
     try:
         from huggingface_hub import snapshot_download
     except ImportError as exc:
