@@ -83,6 +83,15 @@ def _ensure_mesh_utils_patch() -> None:
     subprocess.run([sys.executable, str(script), "--root", str(diff)], check=False)
 
 
+def _ensure_simplify_face_count_patch() -> None:
+    """Idempotent: modern trimesh wants face_count=, not positional target_count."""
+    utils = VENDOR / "hy3dpaint" / "utils"
+    script = REPO / "scripts" / "patch_hunyuan_simplify_face_count.py"
+    if not (utils / "simplify_mesh_utils.py").is_file() or not script.is_file():
+        return
+    subprocess.run([sys.executable, str(script), "--root", str(utils)], check=False)
+
+
 def shape_model_path(model: str) -> str:
     """HF id or local weights directory the shape pipeline can load."""
     local = VENDOR / "weights" / SHAPE_SUBDIRS[model]
@@ -104,6 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     _prepare_paths()
     if not args.shape_only:
         _ensure_mesh_utils_patch()
+        _ensure_simplify_face_count_patch()
     t0 = time.time()
 
     try:

@@ -86,6 +86,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `I2L_BLENDER` (then bpy / trimesh). `hunyuan_cuda_generate.py --shape-only`
   skips paint. DifferentiableRenderer still has no Windows
   `mesh_inpaint_processor` build (documented).
+- **Hunyuan paint mesh simplify on modern trimesh:**
+  `patch_hunyuan_simplify_face_count.py` (bootstrap + generate) calls
+  `simplify_quadric_decimation(face_count=…)` so a face target like 40000 is
+  not read as `percent` / `target_reduction` (`ValueError: must be between 0
+  and 1`). Falls back to the old positional form on TypeError.
 - **Windows rembg / ONNX Runtime cuDNN:** `matte.prepare_onnxruntime_cuda()`
   (Pixal `cut_out`, Hunyuan generate) prepends `torch\\lib` for this process
   and calls `onnxruntime.preload_dlls()` so `cudnn64_9.dll` is found without

@@ -175,3 +175,26 @@ def test_install_code_patches_mesh_utils_for_blender(monkeypatch, tmp_path):
     monkeypatch.setattr(boot, "run", lambda cmd, **kw: seen.append(list(cmd)))
     boot.install_code(tmp_path / "python.exe")
     assert any("patch_hunyuan_mesh_utils_blender.py" in str(c) for c in seen)
+
+
+def test_install_code_patches_simplify_face_count(monkeypatch, tmp_path):
+    utils = tmp_path / "hy3dpaint" / "utils"
+    utils.mkdir(parents=True)
+    (utils / "simplify_mesh_utils.py").write_text(
+        "        courent = courent.simplify_quadric_decimation(target_count)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(boot.host, "os_family", lambda: "windows")
+    monkeypatch.setattr(boot.host, "driver_cuda_version", lambda: "13.0")
+    monkeypatch.setattr(boot.host, "torch_cuda_index", lambda *_: "https://download.pytorch.org/whl/cu130")
+    monkeypatch.setattr(boot.shutil, "which", lambda _n: "/usr/bin/uv")
+    monkeypatch.setattr(boot.trellis_boot, "patch_torch_cpp_extension_cxx20", lambda *_: None)
+    monkeypatch.setattr(boot, "patch_custom_rasterizer_msvc_narrowing", lambda *_: None)
+    monkeypatch.setattr(boot, "patch_mesh_utils_blender", lambda *_: None)
+    monkeypatch.setattr(boot, "install_cuda_extension", lambda *a, **k: None)
+    monkeypatch.setattr(boot, "VENDOR", tmp_path)
+    monkeypatch.setattr(boot.urllib.request, "urlretrieve", lambda *a, **k: None)
+    seen: list[list[str]] = []
+    monkeypatch.setattr(boot, "run", lambda cmd, **kw: seen.append(list(cmd)))
+    boot.install_code(tmp_path / "python.exe")
+    assert any("patch_hunyuan_simplify_face_count.py" in str(c) for c in seen)

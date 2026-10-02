@@ -146,6 +146,16 @@ def patch_mesh_utils_blender(diff: Path) -> None:
     run([sys.executable, str(script), "--root", str(diff)])
 
 
+def patch_simplify_face_count(utils: Path) -> None:
+    """Modern trimesh wants face_count=; positional target_count is read as percent."""
+    script = REPO / "scripts" / "patch_hunyuan_simplify_face_count.py"
+    if not (utils / "simplify_mesh_utils.py").is_file():
+        return
+    print(f"Patching simplify_mesh_utils for trimesh face_count= ({script.name})...",
+          flush=True)
+    run([sys.executable, str(script), "--root", str(utils)])
+
+
 def patch_basicsr_for_torchvision(py: Path) -> None:
     """basicsr still imports removed torchvision.transforms.functional_tensor."""
     script = REPO / "scripts" / "patch_basicsr_functional_tensor.py"
@@ -224,6 +234,9 @@ def install_code(py: Path) -> None:
     diff = VENDOR / "hy3dpaint" / "DifferentiableRenderer"
     if diff.is_dir():
         patch_mesh_utils_blender(diff)
+    utils = VENDOR / "hy3dpaint" / "utils"
+    if utils.is_dir():
+        patch_simplify_face_count(utils)
     setup = diff / "setup.py"
     if setup.is_file():
         try:
