@@ -7,6 +7,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **[`docs/WINDOWS.md`](docs/WINDOWS.md):** Windows + NVIDIA setup from a fresh clone —
+  driver floors, Blender, Visual Studio Build Tools, and in-lab CUDA setup for TRELLIS.2
+  and Hunyuan3D-2.1.
+- **TRELLIS.2 CUDA in the lab** on Linux/Windows NVIDIA: `scripts/bootstrap_trellis_cuda.py`
+  + `scripts/trellis_cuda_generate.py`, wired into Setup & Status / Generate 3D / CLI
+  (same `trellis` backend id as the Mac Metal port).
+- **Hunyuan3D-2.1 CUDA in the lab** on Linux/Windows NVIDIA: `scripts/bootstrap_hunyuan_cuda.py`
+  + `scripts/hunyuan_cuda_generate.py`, wired into the existing Hunyuan Generate entry.
+- **Stable Fast 3D on Windows NVIDIA.** Same installer as Linux: compiles the texture baker
+  with CUDA when `nvcc` matches PyTorch, otherwise its CPU baker. Needs the Visual Studio
+  C++ build tools; the announcement says so before compiling.
+- PowerShell wrappers for Pixal3D, SF3D, TRELLIS CUDA and Hunyuan CUDA bootstraps.
+
+### Changed
+- README and the About page now name Windows alongside Linux for NVIDIA routes.
+- TRELLIS.2 and Hunyuan are no longer “go use another repo” on NVIDIA: the viewer installs
+  and runs the official CUDA stacks under `vendor/`.
+- `find_nvcc` looks under `CUDA_PATH` and the usual Windows Toolkit folders, not only
+  `/usr/local/cuda`.
+- Host memory detection works on Windows (used when capping compile job counts).
+
+### Fixed
+- SF3D and viewer hints no longer tell Windows/Linux users to run the Mac-only
+  `bootstrap_macos.sh`.
+- **TRELLIS.2 CUDA bootstrap on Windows** forces a single C++20 + `/Zc:preprocessor`
+  on **every** extension it builds (nvdiffrast, nvdiffrec, CuMesh, FlexGEMM, o-voxel):
+  shared CCCL ensure hook, setup.py rewrites, torch `cpp_extension` patch, ninja/spawn
+  sanitizer, `/std:` kept out of `CL`, stale `build/` wiped. Fixes a false nvdiffrast
+  abort that mistook hook string literals for missing compile flags.
+- **`scripts/patch_ovoxel_msvc_narrowing.py`:** MSVC o-voxel build fixes applied before
+  compiling `vendor/trellis2-cuda/o-voxel`: cast `size_t` torch shapes to `int64_t`
+  (C2398), strip upstream `1e-6d` / `0.0d` float suffixes in
+  `flexible_dual_grid.cpp` (C3688 — not a patch over-match), and cast `size_t`
+  neighbours into `int4` brace-inits (C4838). Idempotent; refuses to leave `…d`
+  float literals behind.
+- **TRELLIS CUDA bootstrap:** install `psutil` into the TRELLIS venv before the
+  optional `flash-attn==2.7.3` build (`--no-build-isolation`). flash-attn needs
+  it at build time but does not declare it; without this Windows hits
+  `ModuleNotFoundError: psutil`. Still soft-fails to SDPA if the extension
+  itself fails to compile.
+- **Hunyuan CUDA bootstrap on Windows:** set `DISTUTILS_USE_SDK=1` and the shared
+  C++20 / `/Zc:preprocessor` build env (same helpers as TRELLIS) before building
+  `custom_rasterizer` / DifferentiableRenderer; non-editable install. Fixes torch
+  refusing the build when a Visual C++ environment is already activated.
+- **Windows CUDA nvcc flag separation:** do not put bare MSVC `/Zc:` / `/std:` in
+  `CXXFLAGS` (they leak onto nvcc as fake input files). Setup.py runtime hook and
+  `sanitize_nvcc_flags` wrap host flags as `-Xcompiler=…` and keep `-std=c++20`
+  for device code — fixes Hunyuan `custom_rasterizer`
+  `nvcc fatal: A single input file is required…`.
+- **`scripts/patch_hunyuan_rasterizer_msvc_narrowing.py`:** Hunyuan
+  `custom_rasterizer` MSVC fixes before build: cast `size_t` torch shapes to
+  `int64_t` (C2398), and replace `long` / `data_ptr<long>()` / `(long)maxint`
+  with `int64_t` so the link finds LibTorch symbols (LNK2001) and the z-buffer
+  sentinel is not truncated on Windows.
+- **`docs/WINDOWS.md`:** note that CUDA builds need `VsDevCmd.bat -arch=amd64`
+  (or x64 Native Tools); a plain Shell has no `cl` on PATH.
+- **Viewer on Windows:** read `CHANGELOG.md` and other repo/text files as UTF-8
+  so curly quotes no longer crash the welcome card under cp1252.
+- **SF3D Windows CUDA extensions:** `scripts/patch_sf3d_windows_cuda_ext.py`
+  (wired into `bootstrap_sf3d.py`) gives `texture_baker` / `uv_unwrapper`
+  MSVC-safe cxx flags and nvcc `/Zc:preprocessor` (CUDA 13 CCCL C1189). Install
+  env gets the shared Windows CUDA build helpers; failure hints no longer blame
+  missing Build Tools when `cl` is already on PATH.
+- **Hunyuan CUDA bootstrap** installs `pymeshlab==2025.7.post1`, `realesrgan`
+  (paint `image_super_utils`), `pytorch-lightning==1.9.5` (paint unet),
+  `fast_simplification` (paint mesh simplify), rembg’s ORT
+  (`onnxruntime-gpu` on Windows, `onnxruntime` on Linux), and `msvc-runtime`
+  on Windows into `vendor/hunyuan3d-cuda/.venv`. A fresh bootstrap no longer
+  leaves those as a manual `uv pip install` into the lab root `.venv`.
+- **Hunyuan realesrgan / basicsr vs torchvision:** after installing realesrgan,
+  bootstrap runs `patch_basicsr_functional_tensor.py` (point
+  `rgb_to_grayscale` at `torchvision.transforms.functional`) and verifies
+  `from realesrgan import RealESRGANer` in the vendor venv.
+- **Hunyuan paint without pip `bpy`:** `patch_hunyuan_mesh_utils_blender.py`
+  + `image_to_3dlab.obj_to_glb` convert OBJ→GLB via Finish’s `blender.exe` /
+  `I2L_BLENDER` (then bpy / trimesh). `hunyuan_cuda_generate.py --shape-only`
+  skips paint. DifferentiableRenderer still has no Windows
+  `mesh_inpaint_processor` build (documented).
+- **Hunyuan paint mesh simplify on modern trimesh:**
+  `patch_hunyuan_simplify_face_count.py` (bootstrap + generate) calls
+  `simplify_quadric_decimation(face_count=…)` so a face target like 40000 is
+  not read as `percent` / `target_reduction` (`ValueError: must be between 0
+  and 1`). Falls back to the old positional form on TypeError.
+- **Windows rembg / ONNX Runtime cuDNN:** `matte.prepare_onnxruntime_cuda()`
+  (Pixal `cut_out`, Hunyuan generate) prepends `torch\\lib` for this process
+  and calls `onnxruntime.preload_dlls()` so `cudnn64_9.dll` is found without
+  a User PATH change.
+- **Windows Hugging Face cache:** Generate jobs, Setup downloads, and Hunyuan
+  CUDA CLI/bootstrap set `HF_HUB_DISABLE_SYMLINKS=1` so hub downloads do not
+  need symlink privilege (`WinError 1314` without Developer Mode).
+
 ## [0.3.6] - 2026-10-01
 
 ### Fixed

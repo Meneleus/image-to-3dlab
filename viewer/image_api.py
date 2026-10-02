@@ -1,8 +1,9 @@
 """Text to image, one step upstream of everything else in this repo.
 
 Every other tool here starts from a picture. This one makes the picture, for people who
-do not have one yet. It drives `stable-diffusion.cpp` (a prebuilt Metal binary in
-`vendor/sdcpp/`) against Qwen-Image 2.1 in GGUF form.
+do not have one yet. It drives `stable-diffusion.cpp` (a prebuilt binary in
+`vendor/sdcpp/`: Metal on Mac, CUDA on Windows, Vulkan on Linux) against Qwen-Image 2.1
+in GGUF form.
 
 Two things are deliberate:
 
@@ -244,6 +245,15 @@ def weight_manifest() -> dict[str, dict[str, str]]:
     }
 
 
+def runtime_label(platform_id: str | None = None) -> str:
+    """Name the sd.cpp backend this machine uses, for the provenance sidecar."""
+    labels = {
+        "apple-silicon": "stable-diffusion.cpp (Metal)",
+        "nvidia": "stable-diffusion.cpp (CUDA/Vulkan)",
+    }
+    return labels.get(platform_id or host_platform(), "stable-diffusion.cpp")
+
+
 def provenance(prompt: str, settings: dict[str, Any], seconds: float,
                output_path: Path) -> dict[str, Any]:
     """What this picture is, and what the licence lets you do with it."""
@@ -253,7 +263,7 @@ def provenance(prompt: str, settings: dict[str, Any], seconds: float,
         "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "model": {
             "id": MODEL_ID,
-            "runtime": "stable-diffusion.cpp (Metal)",
+            "runtime": runtime_label(),
             "weights": weight_manifest(),
         },
         "license": {

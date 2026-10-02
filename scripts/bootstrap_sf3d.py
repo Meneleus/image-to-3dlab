@@ -6,9 +6,10 @@ repository in `vendor/stable-fast-3d`, installed into this interpreter together 
 two compiled extensions, a texture baker and a UV unwrapper:
 
 - **Apple Silicon:** the baker is built with Metal. It needs Homebrew's `libomp`.
-- **Linux with an NVIDIA card:** the baker is built with CUDA when the CUDA toolkit
-  (`nvcc`) is installed, and with its CPU kernel otherwise. The model runs on the GPU
-  either way.
+- **Linux or Windows with an NVIDIA card:** the baker is built with CUDA when the CUDA
+  toolkit (`nvcc`) matches this PyTorch, and with its CPU kernel otherwise. The model runs
+  on the GPU either way. Windows needs the Visual Studio C++ build tools to compile those
+  extensions (see `docs/WINDOWS.md`).
 
 The **weights** are SF3D itself (3.8 GB, **gated**: accept Stability's licence on Hugging
 Face and log in first) and DINOv2 (1.1 GB), which SF3D would otherwise fetch unannounced
@@ -61,6 +62,23 @@ LICENCE = (
 # Looked up through the module so a test can pretend to be another machine.
 target = host.build_target
 find_nvcc = host.find_nvcc
+
+NVIDIA_KEYS = ("linux-nvidia", "windows-nvidia")
+WINDOWS_BUILD_TOOLS = (
+    "SF3D's extensions need a C++ compiler. On Windows install Visual Studio or the "
+    "Build Tools with the 'Desktop development with C++' workload "
+    "(https://visualstudio.microsoft.com/visual-cpp-build-tools/), open an "
+    "x64 Native Tools / VsDevCmd.bat -arch=amd64 shell so cl.exe is on PATH, "
+    "then run this again. See docs/WINDOWS.md."
+)
+WINDOWS_COMPILE_WITH_CL = (
+    "SF3D's texture_baker / uv_unwrapper failed to compile even though cl.exe is "
+    "already on PATH — this is usually wrong MSVC/CUDA flags (CUDA 13 needs "
+    "/Zc:preprocessor), not missing Build Tools. Pull latest so "
+    "patch_sf3d_windows_cuda_ext.py runs, wipe any texture_baker/uv_unwrapper "
+    "build folders under vendor/stable-fast-3d, and re-run from an x64 Native "
+    "Tools shell. See docs/WINDOWS.md."
+)
 
 
 class GatedAccess(Exception):
@@ -119,13 +137,24 @@ def build_env(key: str, base: dict[str, str]) -> dict[str, str]:
     env.update(USE_CUDA="1" if cuda else "0", USE_METAL="0")
     if cuda:
         env["PATH"] = os.pathsep.join([str(Path(nvcc).parent), env.get("PATH", "")])
+    if key == "windows-nvidia":
+        # Same DISTUTILS_USE_SDK + /Zc:preprocessor env as TRELLIS/Hunyuan.
+        from image_to_3dlab.windows_cuda_build import windows_cuda_build_env
+        env = windows_cuda_build_env(env)
     return env
+
+
+def windows_extension_failure_hint() -> str:
+    """Build-failure message: missing cl vs flags/preprocessor (cl already present)."""
+    if shutil.which("cl") or shutil.which("cl.exe"):
+        return WINDOWS_COMPILE_WITH_CL
+    return WINDOWS_BUILD_TOOLS
 
 
 def route(key: str | None) -> str | None:
     if key == "macos-arm64":
         return "PyTorch on MPS, texture baker built with Metal"
-    if key == "linux-nvidia":
+    if key in NVIDIA_KEYS:
         cuda, why = cuda_baker(find_nvcc())
         baker = "CUDA" if cuda else f"its CPU kernel ({why})"
         return f"PyTorch on CUDA, texture baker built with {baker}"
@@ -133,11 +162,16 @@ def route(key: str | None) -> str | None:
 
 
 def announcement(code: bool = True, weights: bool = True) -> str:
+    key = target()
     lines = ["", "About to install:", "", "  backend: Stable Fast 3D (Stability AI)",
-             f"  route:   {route(target()) or 'none for this machine'}"]
+             f"  route:   {route(key) or 'none for this machine'}"]
     if code:
         lines.append("  code:    Stability-AI/stable-fast-3d -> vendor/stable-fast-3d/, "
                      "plus its pinned Python packages into this interpreter")
+        if key == "windows-nvidia":
+            lines.append("  note:    needs Visual Studio C++ tools (cl on PATH via "
+                         "x64 Native Tools) to compile the texture baker / UV unwrapper; "
+                         "bootstrap patches MSVC/CUDA 13 flags first")
     if weights:
         lines.append(f"  weights: {total_gb():.1f} GB total -> Hugging Face cache")
         for repo, _, size in WEIGHTS:
@@ -179,13 +213,27 @@ def install_code(key: str) -> None:
     subprocess.run([sys.executable, str(REPO / "scripts" / "patch_sf3d_cpu_baker.py"),
                     str(VENDOR / "texture_baker" / "texture_baker" / "baker.py")],
                    check=True)
+    if key == "windows-nvidia":
+        # Upstream setup.py ships Linux gcc flags and only adds /Zc:preprocessor in
+        # debug_mode — CUDA 13 CCCL then dies with C1189 on a normal release build.
+        print("Patching SF3D CUDA/C++ extensions for MSVC...", flush=True)
+        subprocess.run(
+            [sys.executable, str(REPO / "scripts" / "patch_sf3d_windows_cuda_ext.py"),
+             "--root", str(VENDOR)],
+            check=True,
+        )
     print("Installing SF3D's packages and building its extensions...", flush=True)
     # --no-build-isolation so the extensions compile against the torch already installed
     # here, not a fresh one pip would fetch into a throwaway build environment.
     install = pip_install_command()
-    subprocess.run([*install, "setuptools", "wheel"], check=True)
-    subprocess.run([*install, "--no-build-isolation", "-r", "requirements.txt"],
-                   cwd=VENDOR, env=build_env(key, dict(os.environ)), check=True)
+    try:
+        subprocess.run([*install, "setuptools", "wheel"], check=True)
+        subprocess.run([*install, "--no-build-isolation", "-r", "requirements.txt"],
+                       cwd=VENDOR, env=build_env(key, dict(os.environ)), check=True)
+    except subprocess.CalledProcessError as exc:
+        if key == "windows-nvidia":
+            raise SystemExit(windows_extension_failure_hint()) from exc
+        raise
 
 
 def install_weights() -> None:
@@ -217,9 +265,8 @@ def main(argv: list[str] | None = None) -> int:
 
     key = target()
     if route(key) is None:
-        # Windows needs its own compiler setup for the extensions; not offered yet.
-        print("SF3D installs on an Apple Silicon Mac or on Linux with an NVIDIA card. "
-              "Nothing downloaded.")
+        print("SF3D installs on an Apple Silicon Mac, or on Linux/Windows with an "
+              "NVIDIA card. Nothing downloaded.")
         return 1
 
     code = not args.weights_only

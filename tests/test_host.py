@@ -132,6 +132,39 @@ def test_find_nvcc_prefers_path(monkeypatch):
     assert host.find_nvcc() == "/opt/cuda/bin/nvcc"
 
 
+def test_find_nvcc_on_windows_checks_cuda_path_and_toolkit_folder(monkeypatch, tmp_path):
+    monkeypatch.setattr(host, "os_family", lambda *_a, **_k: "windows")
+    monkeypatch.setattr(host.shutil, "which", lambda _: None)
+    toolkit = tmp_path / "NVIDIA GPU Computing Toolkit" / "CUDA"
+    older = toolkit / "v12.1" / "bin"
+    newer = toolkit / "v12.8" / "bin"
+    older.mkdir(parents=True)
+    newer.mkdir(parents=True)
+    (older / "nvcc.exe").write_text("")
+    (newer / "nvcc.exe").write_text("")
+    monkeypatch.setenv("ProgramFiles", str(tmp_path))
+    monkeypatch.delenv("CUDA_PATH", raising=False)
+    assert host.find_nvcc() == str(newer / "nvcc.exe")
+    # CUDA_PATH wins over the versioned Toolkit folders.
+    pinned = tmp_path / "pinned" / "bin"
+    pinned.mkdir(parents=True)
+    (pinned / "nvcc.exe").write_text("")
+    monkeypatch.setenv("CUDA_PATH", str(tmp_path / "pinned"))
+    assert host.find_nvcc() == str(pinned / "nvcc.exe")
+
+
+def test_total_memory_on_windows_uses_global_memory_status(monkeypatch):
+    monkeypatch.setattr(host, "os_family", lambda *_a, **_k: "windows")
+
+    def fake_sysconf(_name):
+        raise AttributeError("no sysconf")
+
+    monkeypatch.setattr(host.os, "sysconf", fake_sysconf)
+    monkeypatch.setattr(host, "_windows_total_memory", lambda: 16 * 1024 ** 3)
+    assert host.total_memory() == 16 * 1024 ** 3
+
+
+
 def test_nvcc_cuda_version_is_read_from_its_release_line():
     out = ("nvcc: NVIDIA (R) Cuda compiler driver\n"
            "Cuda compilation tools, release 12.8, V12.8.93\n")

@@ -29,14 +29,22 @@ tuning checklist. Manual fitting and visual weight/deformation review remain req
 | `bootstrap_macos.sh` | Create the project virtualenv and install the SF3D backend and its native dependencies (needs Python 3.10/3.11 and Homebrew's libomp). |
 | `bootstrap_trellis_macos.sh` | Clone and install the `shivampkumar/trellis-mac` port, with the Metal acceleration backends when Xcode's Metal compiler is present and a slower CPU bake fallback when it is not. |
 | `bootstrap_trellis_space_macos.py` | Bootstrap TRELLIS.2 on macOS from Microsoft's pinned Space source. |
+| `bootstrap_trellis_cuda.py` | Install official TRELLIS.2 for NVIDIA (Linux or Windows) into vendor/trellis2-cuda. |
+| `bootstrap_trellis_cuda.ps1` | Thin PowerShell wrapper for official TRELLIS.2 CUDA setup on Windows. |
+| `bootstrap_hunyuan_cuda.py` | Install official Hunyuan3D-2.1 for NVIDIA into vendor/hunyuan3d-cuda. |
+| `bootstrap_hunyuan_cuda.ps1` | Thin PowerShell wrapper for official Hunyuan3D-2.1 CUDA setup on Windows. |
 | `bootstrap_sf3d.py` | Install Stable Fast 3D: its code and compiled extensions, then its gated weights. |
+| `bootstrap_sf3d.ps1` | Thin PowerShell wrapper for Stable Fast 3D setup on Windows. |
 | `bootstrap_pixal3d.py` | Install Pixal3D (raven38/pixal3d.cpp): a `trellis-cli` build plus its Q8_0 weights. |
+| `bootstrap_pixal3d.ps1` | Thin PowerShell wrapper for Pixal3D setup on Windows. |
 | `bootstrap_matte.py` | Install BiRefNet-lite, the background remover every backend uses once it is present. |
 | `bootstrap_qwen_image.py` | Install the text-to-image route: a stable-diffusion.cpp binary and Qwen-Image weights. |
 | `pixal3d_generate.py` | End-to-end Pixal3D generation: image -> textured GLB, on a Mac or an NVIDIA card. |
 | `trellis_space_generate.py` | Full image -> GLB generation through the CLEAN `trellis-space-mac` port on Apple Silicon. |
+| `trellis_cuda_generate.py` | Full image -> GLB generation through official TRELLIS.2 on NVIDIA CUDA. |
 | `hunyuan_mlx_generate.py` | End-to-end Hunyuan3D-MLX generation: image -> textured GLB. |
 | `hunyuan_mlx_xiong_generate.py` | End-to-end, single-repo Hunyuan3D-MLX generation: image -> textured GLB. |
+| `hunyuan_cuda_generate.py` | End-to-end Hunyuan3D-2.1 (official CUDA) generation: image -> textured GLB. |
 | `hunyuan_shape_octree_test.py` | Shape-only generation at a given octree_resolution, with visible progress. |
 | `trellis_stage3.py` | Resample only TRELLIS.2's Stage-3 material field on a cached shape latent. |
 | `trellis_rebake.py` | Re-bake a GLB from a cached decode, without re-sampling or loading the model. |
@@ -192,6 +200,7 @@ The `*_pose.py` files are pure curve maths with no `bpy`, which is why they have
 | `patch_pixal3d_steps.py` | Let Pixal3D (pixal3d.cpp) run fewer sampling steps, via `PIXAL3D_STEPS=N`. |
 | `photo_paint.py` | Paint a finished model with the real pixels of its source photos, where they can see. |
 | `patch_sf3d_cpu_baker.py` | Let SF3D's texture baker run on the CPU while the model runs on an NVIDIA GPU. |
+| `patch_sf3d_windows_cuda_ext.py` | Make SF3D `texture_baker` / `uv_unwrapper` compile on Windows MSVC + CUDA 13.x. |
 | `patch_trellis_no_bria.py` | Disable TRELLIS' configured background model for license-controlled runs. |
 | `patch_trellis_mlx_attention.py` | Add an `mlx` sparse-attention backend to a vendored TRELLIS.2 checkout. |
 | `render_glb_comparison.py` | Render several GLBs from one fixed camera and lay them out as a comparison image. |
@@ -200,6 +209,11 @@ The `*_pose.py` files are pure curve maths with no `bpy`, which is why they have
 | `patch_ovoxel_weld_before_simplify.py` | Weld coincident vertices before every `simplify()` in o_voxel's `to_glb`. |
 | `patch_ovoxel_skip_spurious_fill.py` | Use the measured-safe cleanup order for Metal remesh output. |
 | `patch_ovoxel_remesh_checkpoints.py` | Add opt-in exact geometry checkpoints to o_voxel's remesh branch. |
+| `patch_ovoxel_msvc_narrowing.py` | Fix MSVC build breaks in vendored o-voxel. |
+| `patch_hunyuan_rasterizer_msvc_narrowing.py` | Fix MSVC / LibTorch breaks in Hunyuan `custom_rasterizer`. |
+| `patch_hunyuan_mesh_utils_blender.py` | Stop Hunyuan paint requiring pip `bpy` in the vendor venv. |
+| `patch_hunyuan_simplify_face_count.py` | Fix Hunyuan paint mesh simplify for modern trimesh. |
+| `patch_basicsr_functional_tensor.py` | Fix basicsr vs modern torchvision so `realesrgan` can import. |
 | `patch_metal_hashmap_miss.py` | Fix the unchecked hashmap miss in the Metal dual-contouring kernel. |
 | `patch_mtlbvh_production_traversal.py` | Apply the production-scale MtlBVH traversal and dispatch-lifetime fixes. |
 | `patch_rignet_macos_compat.py` | Make the vendored RigNet checkout run inference on macOS / Apple Silicon. |

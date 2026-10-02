@@ -8,6 +8,11 @@ head in Pixal3D (2026-09-22), a grey slab around every SF3D model (2026-09-24).
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
+from image_to_3dlab import host
+
 # A real cutout leaves a lot of the frame empty -- a centred subject is typically 30-60%
 # transparent. This floor only has to separate that from an alpha channel that cuts nothing.
 MATTE_MIN_TRANSPARENT = 0.02
@@ -102,7 +107,72 @@ def clean_edges(rgba, solid: int = 250, reach: int = 4):
     return out
 
 
+# --- Windows ORT / cuDNN -------------------------------------------------------------------
+#
+# rembg builds an ONNX Runtime session. The CUDA EP LoadLibrarys cudnn64_9.dll. Torch's
+# CUDA wheel ships that file in site-packages/torch/lib, but rembg imports ORT *before*
+# torch, so ORT never searches that folder. CUDA Toolkit 13.x does not ship cuDNN 9.
+# Fix is process-local (PATH + add_dll_directory) — never the user PATH.
+
+
+_DLL_DIRS: set[str] = set()
+
+
+def torch_lib_dir() -> Path | None:
+    """``site-packages/torch/lib`` when torch is installed, else None."""
+    try:
+        import torch
+    except ImportError:
+        return None
+    lib = Path(torch.__file__).resolve().parent / "lib"
+    return lib if lib.is_dir() else None
+
+
+def add_process_dll_directory(folder: Path) -> None:
+    """Put ``folder`` on this process's DLL search path. Not the user PATH."""
+    key = str(folder)
+    if key in _DLL_DIRS:
+        return
+    adder = getattr(os, "add_dll_directory", None)
+    if adder is not None:
+        adder(key)
+    path = os.environ.get("PATH", "")
+    parts = path.split(os.pathsep) if path else []
+    if key not in parts:
+        os.environ["PATH"] = os.pathsep.join([key, *parts]) if parts else key
+    _DLL_DIRS.add(key)
+
+
+def _preload_ort_dlls(folder: Path) -> None:
+    try:
+        import onnxruntime as ort
+    except ImportError:
+        return
+    preload = getattr(ort, "preload_dlls", None)
+    if preload is None:
+        return
+    try:
+        preload(directory=str(folder))
+    except TypeError:
+        preload()
+    except Exception:  # noqa: BLE001 — preload is best-effort; rembg still runs
+        return
+
+
+def prepare_onnxruntime_cuda() -> Path | None:
+    """Make cuDNN 9 findable before rembg opens an ORT CUDA session. Windows-only."""
+    if host.os_family() != "windows":
+        return None
+    lib = torch_lib_dir()
+    if lib is None:
+        return None
+    add_process_dll_directory(lib)
+    _preload_ort_dlls(lib)
+    return lib
+
+
 def new_session(model: str | None = None):
+    prepare_onnxruntime_cuda()
     import rembg
 
     return rembg.new_session(model or matte_model())
@@ -110,6 +180,7 @@ def new_session(model: str | None = None):
 
 def cut_out(image, session=None):
     """Remove the background from a PIL image; returns (RGBA image, model name used)."""
+    prepare_onnxruntime_cuda()
     import numpy as np
     import rembg
     from PIL import Image

@@ -63,9 +63,12 @@ from finish_api import (
 )
 
 REPO = Path(__file__).resolve().parents[1]
-WRAPPER = REPO / "scripts" / "trellis_space_generate.py"
-PYTHON = REPO / "vendor" / "trellis-space-mac" / ".venv" / "bin" / "python"
-TRELLIS_VENDOR = REPO / "vendor" / "trellis-space-mac"
+from image_to_3dlab import cuda_routes
+from image_to_3dlab.host import NVIDIA, host_platform
+
+WRAPPER = cuda_routes.trellis_wrapper()
+PYTHON = cuda_routes.trellis_python()
+TRELLIS_VENDOR = cuda_routes.trellis_vendor()
 # The dispatch branch scripts/patch_trellis_mlx_attention.py injects. Its presence is how
 # we know the vendored checkout can actually serve SPARSE_ATTN_BACKEND=mlx.
 MLX_DISPATCH_FILE = TRELLIS_VENDOR / "TRELLIS.2" / "trellis2" / "modules" / "sparse" / "attention" / "full_attn.py"
@@ -96,8 +99,8 @@ HUNYUAN_PAINT_WEIGHTS = REPO / "hunyuan_mlx" / "paint" / "weights" / "hunyuan3d-
 # paint stage above — same paint venv/weights, different shape venv/weights entirely.
 # Model choice benchmarked 2026-08-19 — see docs/hunyuan-mlx-recipes.md; 2.0 is the
 # recommended default (Xiong's own pick too), 2.1 is not.
-HUNYUAN_XIONG_WRAPPER = REPO / "scripts" / "hunyuan_mlx_xiong_generate.py"
-HUNYUAN_XIONG_SHAPE_VENV = REPO / "hunyuan_mlx" / "shape" / ".venv" / "bin" / "python"
+HUNYUAN_XIONG_WRAPPER = cuda_routes.hunyuan_wrapper()
+HUNYUAN_XIONG_SHAPE_VENV = cuda_routes.hunyuan_python()
 HUNYUAN_XIONG_SHAPE_ROOT = REPO / "hunyuan_mlx" / "shape" / "weights"
 HUNYUAN_XIONG_SHAPE_MODELS = {
     "2.1": HUNYUAN_XIONG_SHAPE_ROOT / "Hunyuan3D-2.1" / "hunyuan3d-dit-v2-1",
@@ -138,7 +141,9 @@ def _job_env() -> dict[str, str]:
     value in this server's environment (e.g. SPARSE_CONV_BACKEND=none exported earlier)
     would otherwise be inherited and silently break the run.
     """
-    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    from image_to_3dlab.hf_hub_env import apply_windows_hf_hub_env
+
+    env = apply_windows_hf_hub_env({**os.environ, "PYTHONUNBUFFERED": "1"})
     for key in BACKEND_ENV_KEYS:
         env.pop(key, None)
     return env
@@ -192,12 +197,15 @@ class BackendSpec:
     (matching the shape of the pre-existing TRELLIS tqdm/banner handling) rather than
     returning an event for the caller to emit — this keeps the well-tested TRELLIS path
     untouched, just wrapped, instead of restructured.
+
+    ``interpreter`` / ``wrapper`` may be callables so Mac vs CUDA stacks resolve on the
+    machine that is running the job, not the machine that imported this module in a test.
     """
 
     id: str
     label: str
-    interpreter: Path
-    wrapper: Path
+    interpreter: Path | Callable[[], Path]
+    wrapper: Path | Callable[[], Path]
     default_settings: dict[str, Any]
     stages: list[str]
     stage_labels: dict[str, str]
@@ -212,13 +220,19 @@ class BackendSpec:
     backends whose wrapper doesn't write directly to job.output_path (SF3D writes
     ``<stem>_sf3d.glb`` instead)."""
 
+    def resolve_interpreter(self) -> Path:
+        return self.interpreter() if callable(self.interpreter) else self.interpreter
+
+    def resolve_wrapper(self) -> Path:
+        return self.wrapper() if callable(self.wrapper) else self.wrapper
+
 
 BACKENDS: dict[str, BackendSpec] = {}
 
 
 def clean_port_build_present() -> bool:
-    """Whether the clean-port build (interpreter + wrapper) is installed."""
-    return PYTHON.is_file() and WRAPPER.is_file()
+    """Whether the host's TRELLIS build (Mac port or CUDA) is installed."""
+    return cuda_routes.trellis_build_present()
 
 
 def mlx_attention_status(vendor: Path | None = None, dispatch: Path | None = None) -> dict[str, Any]:
@@ -232,7 +246,10 @@ def mlx_attention_status(vendor: Path | None = None, dispatch: Path | None = Non
     vendor = vendor or TRELLIS_VENDOR
     dispatch = dispatch or MLX_DISPATCH_FILE
     try:
-        patched = dispatch.is_file() and MLX_DISPATCH_MARKER in dispatch.read_text()
+        patched = (
+            dispatch.is_file()
+            and MLX_DISPATCH_MARKER in dispatch.read_text(encoding="utf-8")
+        )
     except OSError:
         patched = False
     package = any((vendor / ".venv" / "lib").glob("python*/site-packages/mlx"))
@@ -263,22 +280,28 @@ def with_rebuild_reasons(catalog: dict[str, Any],
 
 
 def setup_status() -> dict[str, Any]:
-    """Machine readiness for the clean-port generator, for the Generate > Setup card."""
+    """Machine readiness for TRELLIS.2, for the Generate > Setup card."""
     build_present = clean_port_build_present()
     weights = weights_on_disk()
     missing = [w["label"] for w in weights.values() if not w["present"]]
+    py = cuda_routes.trellis_python()
+    wrapper = cuda_routes.trellis_wrapper()
+    bootstrap = cuda_routes.trellis_bootstrap()
+    if cuda_routes.trellis_route() == "cuda":
+        hint = (f"TRELLIS CUDA build missing — run: python {bootstrap.relative_to(REPO)} "
+                "(needs uv, Python 3.11, CUDA toolkit; VS C++ tools on Windows)"
+                if not build_present else None)
+    else:
+        hint = (f"clean-port build missing — from the repo root run: python {bootstrap.name} "
+                "(requires uv, Python 3.11 and Xcode command-line tools)"
+                if not build_present else None)
     return {
         "schema_version": 1,
         "build": {
             "present": build_present,
-            "interpreter": str(PYTHON),
-            "wrapper": str(WRAPPER),
-            "hint": (
-                "clean-port build missing — from the repo root run: "
-                "python scripts/bootstrap_trellis_space_macos.py "
-                "(requires uv, Python 3.11 and Xcode command-line tools)"
-                if not build_present else None
-            ),
+            "interpreter": str(py),
+            "wrapper": str(wrapper),
+            "hint": hint,
         },
         "weights": weights,
         "missing_weights": missing,
@@ -292,13 +315,14 @@ def setup_status() -> dict[str, Any]:
 
 def run_trellis_input_advisor(image_path: Path) -> dict[str, Any]:
     """Run TinyCLIP out-of-process so the lightweight viewer never imports torch."""
-    if not PYTHON.is_file():
+    python = cuda_routes.trellis_python()
+    if not python.is_file():
         raise RuntimeError("TRELLIS environment is not installed")
     if not TINYCLIP_ADVISOR.is_file():
         raise RuntimeError(f"TinyCLIP advisor is missing: {TINYCLIP_ADVISOR}")
     try:
         result = subprocess.run(
-            [str(PYTHON), str(TINYCLIP_ADVISOR), str(image_path)],
+            [str(python), str(TINYCLIP_ADVISOR), str(image_path)],
             cwd=REPO,
             env=_job_env(),
             check=True,
@@ -351,7 +375,7 @@ def setup_available() -> tuple[bool, str | None]:
     """Whether the setup runner can start: uv on PATH and the bootstrap script present."""
     if shutil.which("uv") is None:
         return False, "uv is not installed — install it first (https://docs.astral.sh/uv/)"
-    bootstrap = REPO / "scripts" / "bootstrap_trellis_space_macos.py"
+    bootstrap = cuda_routes.trellis_bootstrap()
     if not bootstrap.is_file():
         return False, f"bootstrap script missing: {bootstrap}"
     return True, None
@@ -360,9 +384,12 @@ def setup_available() -> tuple[bool, str | None]:
 def _start_setup_run(run_id: str) -> SetupRun:
     """Spawn the bootstrap and stream its output into the run's events (SSE)."""
     run = SetupRun(run_id)
-    bootstrap = REPO / "scripts" / "bootstrap_trellis_space_macos.py"
+    bootstrap = cuda_routes.trellis_bootstrap()
+    cmd = [sys.executable, str(bootstrap)]
+    if cuda_routes.trellis_route() == "cuda":
+        cmd.append("--yes")
     proc = subprocess.Popen(
-        [sys.executable, str(bootstrap)],
+        cmd,
         cwd=str(REPO),
         env=_job_env(),
         stdout=subprocess.PIPE,
@@ -572,7 +599,7 @@ def uncut_image_error(border_fraction: float) -> str:
 
 def _baseline() -> dict[str, float]:
     try:
-        data = json.loads(BASELINE_PATH.read_text())
+        data = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
         seconds = data.get("seconds", data.get("stages", {}))
         return {str(k): float(v) for k, v in seconds.items() if v is not None}
     except (OSError, ValueError, TypeError):
@@ -584,7 +611,7 @@ def _update_baseline(job: Job) -> None:
     if not job.stage_durations:
         return
     try:
-        data = json.loads(BASELINE_PATH.read_text())
+        data = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError):
         data = {"schema_version": 1}
     seconds = data.setdefault("seconds", {})
@@ -936,7 +963,7 @@ def _reconcile_orphaned_jobs(output_root: Path) -> list[str]:
     for pid_file in sorted(output_root.rglob("pid")):
         directory = pid_file.parent
         try:
-            pid, owner = processes.parse_pid_record(pid_file.read_text())
+            pid, owner = processes.parse_pid_record(pid_file.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             pid_file.unlink(missing_ok=True)
             continue
@@ -986,9 +1013,10 @@ def failure_reason(log_lines, limit: int = 6) -> str | None:
 
 def _run_job(job: Job) -> None:
     spec = BACKENDS[job.backend_id]
-    args = [str(spec.interpreter), str(spec.wrapper), *spec.build_args(job)]
+    args = [str(spec.resolve_interpreter()), str(spec.resolve_wrapper()),
+            *spec.build_args(job)]
     env = _job_env()
-    if job.backend_id == "trellis":
+    if job.backend_id == "trellis" and cuda_routes.trellis_route() == "mac":
         env.update(attention_backend_spec(job.settings["sparse_attn_backend"])[1])
     try:
         job.status = "running"
@@ -1155,7 +1183,7 @@ def _sf3d_readiness() -> dict[str, Any]:
             "present": present,
             "hint": None if present else (
                 f"SF3D checkout not found at {SF3D_REPO_DEFAULT} — "
-                "run scripts/bootstrap_macos.sh first."
+                "run scripts/bootstrap_sf3d.py first."
             ),
         },
         "weights": {},
@@ -1330,10 +1358,12 @@ def _hunyuan_readiness() -> dict[str, Any]:
 
 HUNYUAN_XIONG_DEFAULT_SETTINGS: dict[str, Any] = {
     **HUNYUAN_DEFAULT_SETTINGS,
-    "model": "2.0",
-    "quantize": 8,
+    # CUDA ships 2.1 as the official release; MLX's measured default stays 2.0.
+    "model": "2.1" if host_platform() == NVIDIA else "2.0",
+    "quantize": 0 if host_platform() == NVIDIA else 8,
 }
 HUNYUAN_XIONG_VALID_QUANTIZE = {0, 4, 8}
+HUNYUAN_XIONG_MODELS = {"2.1", "2.0", "2.0-turbo"}
 
 
 def _hunyuan_xiong_validate_settings(raw: Any) -> dict[str, Any]:
@@ -1342,9 +1372,9 @@ def _hunyuan_xiong_validate_settings(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError("settings must be a JSON object")
     settings = {**HUNYUAN_XIONG_DEFAULT_SETTINGS, **raw}
-    if settings["model"] not in HUNYUAN_XIONG_SHAPE_MODELS:
+    if settings["model"] not in HUNYUAN_XIONG_MODELS:
         raise ValueError(
-            f"model must be one of {sorted(HUNYUAN_XIONG_SHAPE_MODELS)}"
+            f"model must be one of {sorted(HUNYUAN_XIONG_MODELS)}"
         )
     try:
         for key in ("octree_resolution", "seed", "quantize", "decimation_target",
@@ -1393,16 +1423,64 @@ def _hunyuan_xiong_shape_weights_status() -> dict[str, dict[str, Any]]:
     actually downloaded (found 2026-08-20 via a real screenshot: three "undefined" rows on
     a machine that in fact had weights present)."""
     out: dict[str, dict[str, Any]] = {}
-    for name, path in HUNYUAN_XIONG_SHAPE_MODELS.items():
+    if host_platform() == NVIDIA:
+        root = cuda_routes.HUNYUAN_CUDA / "weights"
+        mapping = {
+            "2.1": root / "hunyuan3d-dit-v2-1",
+            "2.0": root / "hunyuan3d-dit-v2-0",
+            "2.0-turbo": root / "hunyuan3d-dit-v2-0-turbo",
+        }
+        label_prefix = "Hunyuan3D-2.1 CUDA"
+    else:
+        mapping = HUNYUAN_XIONG_SHAPE_MODELS
+        label_prefix = "Hunyuan3D-MLX shape weights"
+    for name, path in mapping.items():
         present = path.is_dir()
         size = _dir_state(path)[1]
-        out[name] = {"label": f"Hunyuan3D-MLX shape weights ({name})", "present": present,
+        out[name] = {"label": f"{label_prefix} ({name})", "present": present,
                      "bytes": size, "human": _human_bytes(size)}
     return out
 
 
 def _hunyuan_xiong_readiness() -> dict[str, Any]:
-    shape_ok = HUNYUAN_XIONG_SHAPE_VENV.is_file() and HUNYUAN_XIONG_WRAPPER.is_file()
+    if host_platform() == NVIDIA:
+        shape_ok = cuda_routes.hunyuan_build_present()
+        weights_status = _hunyuan_xiong_shape_weights_status()
+        model_availability = {name: info["present"] for name, info in weights_status.items()}
+        any_model_ok = any(model_availability.values())
+        # Also treat a single weights/ tree from bootstrap as ready for 2.1.
+        bundle = cuda_routes.HUNYUAN_CUDA / "weights"
+        if bundle.is_dir() and any(bundle.iterdir()):
+            any_model_ok = True
+            model_availability["2.1"] = True
+            weights_status.setdefault(
+                "2.1", {"label": "Hunyuan3D-2.1 CUDA (2.1)", "present": True,
+                        "bytes": _dir_state(bundle)[1],
+                        "human": _human_bytes(_dir_state(bundle)[1])})
+        ready = shape_ok and any_model_ok
+        missing = []
+        if not shape_ok:
+            missing.append("CUDA checkout/venv (python scripts/bootstrap_hunyuan_cuda.py)")
+        if not any_model_ok:
+            missing.append("weights (~10 GB) — re-run bootstrap without --code-only")
+        return {
+            "schema_version": 1,
+            "build": {
+                "present": ready,
+                "hint": None if ready else (
+                    "Hunyuan3D-2.1 CUDA setup is incomplete — missing: "
+                    + "; ".join(missing)
+                ),
+            },
+            "weights": weights_status,
+            "missing_weights": missing,
+            "model_availability": model_availability,
+            "ready": ready,
+            "warning": "Official CUDA path. Weights are under the Tencent Community License.",
+        }
+
+    shape_ok = (cuda_routes.hunyuan_python().is_file()
+                and cuda_routes.hunyuan_wrapper().is_file())
     weights_status = _hunyuan_xiong_shape_weights_status()
     model_availability = {name: info["present"] for name, info in weights_status.items()}
     any_model_ok = any(model_availability.values())
@@ -1443,9 +1521,6 @@ def _hunyuan_xiong_readiness() -> dict[str, Any]:
         },
         "weights": weights_status,
         "missing_weights": missing,
-        # Per model, so the Shape model dropdown can disable what is not on disk instead
-        # of letting a run fail minutes in. Downloading only the default route is now the
-        # norm, so absent models are the expected case rather than a broken install.
         "model_availability": model_availability,
         "ready": ready,
         "warning": (
@@ -1576,8 +1651,9 @@ def _pixal3d_readiness() -> dict[str, Any]:
 
 BACKENDS.update({
     "trellis": BackendSpec(
-        id="trellis", label="TRELLIS.2 (clean port)",
-        interpreter=PYTHON, wrapper=WRAPPER,
+        id="trellis",
+        label="TRELLIS.2 (CUDA)" if host_platform() == NVIDIA else "TRELLIS.2 (clean port)",
+        interpreter=cuda_routes.trellis_python, wrapper=cuda_routes.trellis_wrapper,
         default_settings=DEFAULT_SETTINGS, stages=STAGES, stage_labels=PHASE_LABELS,
         requires_alpha=True,
         validate_settings=validate_settings, build_args=_trellis_build_args,
@@ -1601,8 +1677,10 @@ BACKENDS.update({
         parse_line=_hunyuan_parse_line, readiness=_hunyuan_readiness,
     ),
     "hunyuan-mlx-xiong": BackendSpec(
-        id="hunyuan-mlx-xiong", label="Hunyuan3D-MLX (Xiong, full pipeline)",
-        interpreter=HUNYUAN_XIONG_SHAPE_VENV, wrapper=HUNYUAN_XIONG_WRAPPER,
+        id="hunyuan-mlx-xiong",
+        label=("Hunyuan3D-2.1 (CUDA)" if host_platform() == NVIDIA
+               else "Hunyuan3D-MLX (Xiong, full pipeline)"),
+        interpreter=cuda_routes.hunyuan_python, wrapper=cuda_routes.hunyuan_wrapper,
         default_settings=HUNYUAN_XIONG_DEFAULT_SETTINGS, stages=HUNYUAN_STAGES,
         stage_labels=HUNYUAN_STAGE_LABELS, requires_alpha=False,
         validate_settings=_hunyuan_xiong_validate_settings, build_args=_hunyuan_xiong_build_args,

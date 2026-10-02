@@ -58,7 +58,7 @@ def update_command(repo: Path, family: str) -> str:
 
 def _read_cache(path: Path) -> dict[str, Any]:
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
 

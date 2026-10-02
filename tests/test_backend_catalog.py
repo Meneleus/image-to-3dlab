@@ -286,17 +286,16 @@ def test_the_page_can_tell_a_wrong_machine_from_an_empty_one():
     assert bc.catalog_status(host=bc.APPLE)["host"]["any_backend_runs_here"] is True
 
 
-def test_adding_a_cuda_route_is_a_one_string_change():
-    """The gate must not be a Mac check, because NVIDIA support is coming.
-
-    Declaring the platform on one backend is the whole change; nothing else should need
-    editing for it to become installable on that machine.
-    """
-    import dataclasses
-    cuda_pixal3d = dataclasses.replace(bc.BY_ID["pixal3d"], runs_on=(bc.APPLE, bc.NVIDIA))
-    assert cuda_pixal3d.runs_here(bc.NVIDIA) is True
-    assert cuda_pixal3d.describe(bc.NVIDIA)["state"] != "unsupported"
-    assert bc.BY_ID["hunyuan_xiong"].runs_here(bc.NVIDIA) is False
+def test_trellis_and_hunyuan_run_on_nvidia_in_the_catalogue():
+    """CUDA stacks are first-class: Setup & Status must offer them on NVIDIA hosts."""
+    assert bc.NVIDIA in bc.BY_ID["trellis"].runs_on
+    assert bc.NVIDIA in bc.BY_ID["hunyuan_xiong"].runs_on
+    assert bc.BY_ID["trellis"].runs_here(bc.NVIDIA) is True
+    assert bc.BY_ID["hunyuan_xiong"].runs_here(bc.NVIDIA) is True
+    assert bc.BY_ID["trellis"].describe(bc.NVIDIA)["state"] != "unsupported"
+    assert bc.BY_ID["hunyuan_xiong"].describe(bc.NVIDIA)["state"] != "unsupported"
+    # dgrauet pairing stays Mac/MLX-only.
+    assert bc.BY_ID["hunyuan-mlx"].runs_here(bc.NVIDIA) is False
 
 
 # --- One catalogue, every route ----------------------------------------------------------
@@ -355,17 +354,12 @@ def test_there_is_only_ever_one_catalogue_module():
     assert sys.modules["backend_catalog"] is bc
 
 
-def test_a_mac_port_points_other_machines_at_the_official_nvidia_version():
-    """TRELLIS.2 and Hunyuan3D are NVIDIA-first upstream; only our ports are Mac-only.
-
-    A Linux or Windows user must not read "needs Apple Silicon" as the whole truth.
-    """
-    for backend_id in ("trellis", "hunyuan_xiong", "hunyuan-mlx"):
-        entry = bc.BY_ID[backend_id].describe(bc.NVIDIA)
-        assert entry["supported_here"] is False
-        assert entry["upstream"]["url"].startswith("https://github.com/"), backend_id
-        assert "port" in entry["platform_note"] and "NVIDIA" in entry["platform_note"]
-        assert entry["upstream"]["label"] in entry["platform_note"], backend_id
+def test_remaining_mac_only_hunyuan_still_points_nvidia_elsewhere():
+    """dgrauet's MLX pairing is still Mac-only; NVIDIA users get a clear note."""
+    entry = bc.BY_ID["hunyuan-mlx"].describe(bc.NVIDIA)
+    assert entry["supported_here"] is False
+    assert entry["upstream"]["url"].startswith("https://github.com/")
+    assert "NVIDIA" in entry["platform_note"]
 
 
 def test_a_route_with_no_official_elsewhere_keeps_the_plain_note():

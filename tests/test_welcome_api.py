@@ -74,14 +74,24 @@ def test_news_since_the_last_seen_version(since, expected):
 def test_version_matches_the_newest_changelog_release():
     """The welcome card decides what is new from this number. It sat at 0.1.0 through the
     0.2.0 release, which would have announced nothing to anyone."""
-    releases = welcome_api.parse_changelog((REPO / "CHANGELOG.md").read_text())
+    releases = welcome_api.parse_changelog(
+        (REPO / "CHANGELOG.md").read_text(encoding="utf-8"))
     assert image_to_3dlab.__version__ == releases[0]["version"]
 
 
 def test_brand_lives_in_one_file():
-    brand = json.loads((REPO / "viewer" / "brand.json").read_text())
+    brand = json.loads((REPO / "viewer" / "brand.json").read_text(encoding="utf-8"))
     assert brand["name"] == "Bingeljell's Image-to-3D Lab"
     assert welcome_api.brand() == brand
+
+
+def test_read_changelog_uses_utf8(tmp_path, monkeypatch):
+    """Windows defaults to cp1252; curly quotes in CHANGELOG must still decode."""
+    path = tmp_path / "CHANGELOG.md"
+    path.write_text("## [0.1.0]\n\n### Added\n- **Curly “quotes”.**\n", encoding="utf-8")
+    monkeypatch.setattr(welcome_api, "CHANGELOG", path)
+    text = welcome_api.read_changelog()
+    assert "“quotes”" in text
 
 
 def test_payload_names_this_machine_and_its_routes(monkeypatch):
@@ -93,8 +103,8 @@ def test_payload_names_this_machine_and_its_routes(monkeypatch):
     assert data["brand"]["name"] == "Bingeljell's Image-to-3D Lab"
     assert data["host"]["id"] == "nvidia"
     runs_here = {r["id"] for r in data["routes"]}
-    assert {"pixal3d", "sf3d", "qwen-image"} <= runs_here
-    assert "trellis" not in runs_here  # Mac-only for now
+    assert {"pixal3d", "sf3d", "qwen-image", "trellis", "hunyuan_xiong"} <= runs_here
+    assert "hunyuan-mlx" not in runs_here  # dgrauet MLX pairing stays Mac-only
     assert [r["version"] for r in data["news"]] == ["0.3.0"]
 
 

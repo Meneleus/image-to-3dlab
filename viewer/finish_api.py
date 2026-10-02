@@ -491,7 +491,7 @@ class FinishJobManager:
                 if not required.is_file():
                     raise RuntimeError(f"{name} is missing {required.name}")
             job.settings = fit_to_machine(
-                normalise_settings(json.loads(job.settings_path.read_text())))
+                normalise_settings(json.loads(job.settings_path.read_text(encoding="utf-8"))))
             job.resume = True
             self.jobs[job.id] = job
             self.active = job.id
@@ -681,7 +681,7 @@ def served_url(path: Path) -> str | None:
 
 def _read_json(path: Path) -> dict[str, Any] | None:
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
 

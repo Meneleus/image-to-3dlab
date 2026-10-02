@@ -35,6 +35,18 @@ NON_PYTHON = {
         "acceleration backends when Xcode's Metal compiler is present and a slower CPU "
         "bake fallback when it is not."
     ),
+    "bootstrap_sf3d.ps1": (
+        "Thin PowerShell wrapper for Stable Fast 3D setup on Windows."
+    ),
+    "bootstrap_pixal3d.ps1": (
+        "Thin PowerShell wrapper for Pixal3D setup on Windows."
+    ),
+    "bootstrap_trellis_cuda.ps1": (
+        "Thin PowerShell wrapper for official TRELLIS.2 CUDA setup on Windows."
+    ),
+    "bootstrap_hunyuan_cuda.ps1": (
+        "Thin PowerShell wrapper for official Hunyuan3D-2.1 CUDA setup on Windows."
+    ),
     "rebuild_metallib.sh": (
         "Recompile and install cumesh's Metal shader library after patching a `.metal` "
         "source, without rebuilding the Obj-C++ extension."

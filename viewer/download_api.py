@@ -33,7 +33,6 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "viewer"))
 sys.path.insert(0, str(REPO))
 
-from image_to_3dlab import processes  # noqa: E402
 from backend_catalog import (  # noqa: E402
     BY_ID,
     HF_HUB_DIR,
@@ -43,6 +42,10 @@ from backend_catalog import (  # noqa: E402
     venv_python,
 )
 
+from image_to_3dlab import cuda_routes, processes  # noqa: E402
+from image_to_3dlab.hf_hub_env import apply_windows_hf_hub_env  # noqa: E402
+from image_to_3dlab.host import NVIDIA, host_platform  # noqa: E402
+
 POLL_SECONDS = 2.0
 STALL_SECONDS = 90.0
 ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\r")
@@ -51,17 +54,31 @@ TERMINAL = {"done", "error", "cancelled"}
 # How each backend is installed. Kept here rather than in the catalogue because the
 # catalogue describes *what* a backend needs and this describes *how* to get it; the
 # viewer shows the first to everyone and only ever runs the second on request.
-COMMANDS: dict[str, list[str]] = {
-    "trellis": [sys.executable, str(REPO / "scripts" / "bootstrap_trellis_space_macos.py")],
-    "pixal3d": [sys.executable, str(REPO / "scripts" / "bootstrap_pixal3d.py"), "--yes"],
-    "sf3d": [sys.executable, str(REPO / "scripts" / "bootstrap_sf3d.py"), "--yes"],
-    "hunyuan_xiong": [
+def _trellis_setup_command() -> list[str]:
+    script = cuda_routes.trellis_bootstrap()
+    cmd = [sys.executable, str(script)]
+    if cuda_routes.trellis_route() == "cuda":
+        cmd.append("--yes")
+    return cmd
+
+
+def _hunyuan_xiong_setup_command() -> list[str]:
+    if host_platform() == NVIDIA:
+        return [sys.executable, str(cuda_routes.HUNYUAN_CUDA_BOOTSTRAP), "--yes"]
+    return [
         str(venv_python(REPO / "hunyuan_mlx" / "shape")),
         str(REPO / "hunyuan_mlx" / "download_weights.py"),
         # Explicitly the default route, not every model. Without --model this fetches all
         # three shape checkpoints, which is 23 GB where the default route needs 5.
         "--model", "2.0",
-    ],
+    ]
+
+
+COMMANDS: dict[str, list[str]] = {
+    "trellis": _trellis_setup_command(),
+    "pixal3d": [sys.executable, str(REPO / "scripts" / "bootstrap_pixal3d.py"), "--yes"],
+    "sf3d": [sys.executable, str(REPO / "scripts" / "bootstrap_sf3d.py"), "--yes"],
+    "hunyuan_xiong": _hunyuan_xiong_setup_command(),
     # --yes because the browser already asked. The confirmation AGENTS.md requires is the
     # Setup & Status dialog; asking again on a stdin nobody is attached to would hang.
     "qwen-image": [sys.executable, str(REPO / "scripts" / "bootstrap_qwen_image.py"),
@@ -320,10 +337,12 @@ def _run(run: DownloadRun) -> None:
     try:
         run.process = subprocess.Popen(
             run.command, cwd=str(REPO),
-            env={**os.environ, "PYTHONUNBUFFERED": "1",
-                 # The bars are unreadable in a browser and the size watcher is the real
-                 # progress signal, so ask the downloader not to draw them at all.
-                 "HF_HUB_DISABLE_PROGRESS_BARS": "1"},
+            env=apply_windows_hf_hub_env({
+                **os.environ, "PYTHONUNBUFFERED": "1",
+                # The bars are unreadable in a browser and the size watcher is the real
+                # progress signal, so ask the downloader not to draw them at all.
+                "HF_HUB_DISABLE_PROGRESS_BARS": "1",
+            }),
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0,
             # Its own process group, so cancelling kills the downloader's children too.
             **processes.group_popen_kwargs(),
@@ -391,7 +410,16 @@ def _watch_elapsed(run: DownloadRun, stop: threading.Event) -> None:
     healthy hour-long compile is worse than saying nothing.
     """
     estimate = (REBUILD_MINUTES if run.rebuild else run.backend.setup_minutes or 0) * 60
-    what = "rebuilding" if run.rebuild else "building the Metal port"
+    if run.rebuild:
+        what = "rebuilding"
+    elif run.backend.id == "trellis" and cuda_routes.trellis_route() == "cuda":
+        what = "building the CUDA TRELLIS.2 stack"
+    elif run.backend.id == "hunyuan_xiong" and host_platform() == NVIDIA:
+        what = "building the CUDA Hunyuan3D stack"
+    elif run.backend.id == "trellis":
+        what = "building the Metal port"
+    else:
+        what = "installing"
     while not stop.wait(POLL_SECONDS * 2):
         elapsed = time.monotonic() - run.started
         percent = 0 if estimate <= 0 else max(0, min(95, round(elapsed / estimate * 100)))

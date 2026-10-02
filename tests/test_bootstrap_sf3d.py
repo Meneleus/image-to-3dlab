@@ -20,6 +20,7 @@ def test_weight_total_matches_the_catalogue():
 @pytest.mark.parametrize("key,cuda_env,metal_env", [
     ("macos-arm64", "0", "1"),
     ("linux-nvidia", "1", "0"),
+    ("windows-nvidia", "1", "0"),
 ])
 def test_extension_build_flags_follow_the_machine(monkeypatch, key, cuda_env, metal_env):
     monkeypatch.setattr(boot, "find_nvcc", lambda: "/usr/local/cuda/bin/nvcc")
@@ -34,6 +35,7 @@ def test_linux_without_nvcc_builds_the_cpu_baker(monkeypatch):
     it still builds, and bakes on the CPU."""
     monkeypatch.setattr(boot, "find_nvcc", lambda: None)
     assert boot.build_env("linux-nvidia", {})["USE_CUDA"] == "0"
+    assert boot.build_env("windows-nvidia", {})["USE_CUDA"] == "0"
 
 
 def test_nvcc_off_path_is_put_on_it(monkeypatch):
@@ -53,13 +55,69 @@ def test_announcement_names_backend_route_size_and_gating(monkeypatch):
         assert needle in text
 
 
-@pytest.mark.parametrize("key", [None, "windows-nvidia"])
+@pytest.mark.parametrize("key", [None])
 def test_unsupported_machines_are_refused_before_anything(monkeypatch, capsys, key):
     monkeypatch.setattr(boot, "target", lambda: key)
     monkeypatch.setattr(boot, "install_code", lambda *a: pytest.fail("installed"))
     monkeypatch.setattr(boot, "install_weights", lambda: pytest.fail("downloaded"))
     assert boot.main(["--yes"]) == 1
     assert "Nothing downloaded" in capsys.readouterr().out
+
+
+def test_windows_nvidia_is_a_supported_route(monkeypatch):
+    monkeypatch.setattr(boot, "find_nvcc", lambda: None)
+    assert boot.route("windows-nvidia") is not None
+    monkeypatch.setattr(boot, "target", lambda: "windows-nvidia")
+    text = boot.announcement()
+    assert "x64 Native Tools" in text
+    assert "MSVC/CUDA 13" in text
+
+
+def test_windows_compile_failure_names_the_build_tools_when_cl_missing(
+        monkeypatch, tmp_path):
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(boot, "VENDOR", tmp_path)
+    monkeypatch.setattr(boot, "pip_install_command", lambda: ["pip", "install"])
+    monkeypatch.setattr(boot, "find_nvcc", lambda: None)
+    monkeypatch.setattr(boot.shutil, "which", lambda name: None)
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        if cmd[:2] == ["pip", "install"]:
+            raise boot.subprocess.CalledProcessError(1, cmd)
+        return boot.subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(boot.subprocess, "run", run)
+    with pytest.raises(SystemExit, match="Desktop development with C\\+\\+"):
+        boot.install_code("windows-nvidia")
+    assert any(c[:2] == ["pip", "install"] for c in calls)
+    assert any("patch_sf3d_windows_cuda_ext.py" in str(c) for c in calls)
+
+
+def test_windows_compile_failure_with_cl_on_path_does_not_blame_build_tools(
+        monkeypatch, tmp_path):
+    """REDFURY already had VS 18 + cl; the real bug was /Zc:preprocessor, not missing tools."""
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(boot, "VENDOR", tmp_path)
+    monkeypatch.setattr(boot, "pip_install_command", lambda: ["pip", "install"])
+    monkeypatch.setattr(boot, "find_nvcc", lambda: None)
+    monkeypatch.setattr(
+        boot.shutil, "which",
+        lambda name: "C:\\cl.exe" if name in ("cl", "cl.exe") else None,
+    )
+
+    def run(cmd, **kw):
+        if cmd[:2] == ["pip", "install"]:
+            raise boot.subprocess.CalledProcessError(1, cmd)
+        return boot.subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(boot.subprocess, "run", run)
+    with pytest.raises(SystemExit) as exc:
+        boot.install_code("windows-nvidia")
+    msg = str(exc.value)
+    assert "/Zc:preprocessor" in msg
+    assert "not missing Build Tools" in msg
 
 
 def test_no_yes_and_no_terminal_means_no_download(monkeypatch):
@@ -136,6 +194,46 @@ def test_build_tools_go_in_before_the_extensions(monkeypatch, tmp_path):
     assert calls[0][1].endswith("patch_sf3d_cpu_baker.py")  # before the baker is built
     assert calls[1] == ["pip", "install", "setuptools", "wheel"]
     assert calls[2][-2:] == ["-r", "requirements.txt"]
+    assert not any("patch_sf3d_windows_cuda_ext.py" in str(c) for c in calls)
+
+
+def test_windows_install_patches_msvc_flags_then_builds(monkeypatch, tmp_path):
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(boot, "VENDOR", tmp_path)
+    monkeypatch.setattr(boot, "pip_install_command", lambda: ["pip", "install"])
+    monkeypatch.setattr(boot, "find_nvcc", lambda: None)
+    seen = {}
+
+    def run(cmd, **kw):
+        if kw.get("env") is not None:
+            seen["env"] = kw["env"]
+        return boot.subprocess.CompletedProcess(cmd, 0)
+
+    calls = []
+    monkeypatch.setattr(
+        boot.subprocess, "run",
+        lambda cmd, **kw: (calls.append(cmd), run(cmd, **kw))[1],
+    )
+    # Force the windows-cuda-build branch even on this Linux CI host.
+    monkeypatch.setattr(
+        "image_to_3dlab.host.os_family", lambda: "windows",
+    )
+    boot.install_code("windows-nvidia")
+    assert any(c[1].endswith("patch_sf3d_cpu_baker.py") for c in calls)
+    assert any(c[1].endswith("patch_sf3d_windows_cuda_ext.py") for c in calls)
+    assert seen["env"].get("DISTUTILS_USE_SDK") == "1"
+    assert "/Zc:preprocessor" in seen["env"].get("CL", "")
+
+
+def test_windows_build_env_sets_msvc_cccl_flags(monkeypatch):
+    monkeypatch.setattr(boot, "find_nvcc", lambda: r"C:\CUDA\bin\nvcc.exe")
+    monkeypatch.setattr(boot, "nvcc_version", lambda *a: "13.2")
+    monkeypatch.setattr(boot, "torch_cuda_version", lambda: "13.0")
+    monkeypatch.setattr("image_to_3dlab.host.os_family", lambda: "windows")
+    env = boot.build_env("windows-nvidia", {"PATH": r"C:\x"})
+    assert env["USE_CUDA"] == "1"
+    assert env["DISTUTILS_USE_SDK"] == "1"
+    assert "/Zc:preprocessor" in env["CL"]
 
 
 # On the second NVIDIA pod, PyTorch from PyPI was built for CUDA 13.0 and the pod's nvcc

@@ -38,7 +38,7 @@ function renderMachine(payload) {
   const routes = payload.routes || [];
   if (!routes.length) {
     return `<h2>This machine</h2><p>${inlineCode(payload.host.label)}. Nothing in the lab
-      runs here yet: it needs an Apple Silicon Mac, or Linux with an NVIDIA card.</p>`;
+      runs here yet: it needs an Apple Silicon Mac, or Linux/Windows with an NVIDIA card.</p>`;
   }
   const rows = routes.map((route) => {
     const ready = route.state === 'ready';

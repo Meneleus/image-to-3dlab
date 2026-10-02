@@ -6,6 +6,9 @@
 # Re-running it is how you update. It never downloads model weights; those are chosen,
 # sized and agreed to in the viewer's Setup & Status page.
 #
+# Full Windows walkthrough: docs/WINDOWS.md (after clone) or
+#   https://github.com/Bingeljell/image-to-3dlab/blob/main/docs/WINDOWS.md
+#
 # Options: set these before running, e.g. $env:I3D_DIR = "D:\lab"
 #   I3D_DIR    where to install (default: $HOME\image-to-3dlab)
 #   I3D_REF    a release tag or branch (default: the newest vX.Y.Z release)
@@ -111,4 +114,5 @@ Write-Host ""
 Write-Host "    cd `"$Dir`"; .venv\Scripts\python.exe viewer\serve.py"
 Write-Host ""
 Say "Then open Setup & Status to choose what to install. Nothing large downloads until you say so there."
+Say "Windows details (CUDA, Blender, which backends work): docs\WINDOWS.md"
 Say "To update later, run this installer again, then restart the viewer."

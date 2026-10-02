@@ -32,10 +32,14 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from image_to_3dlab import cuda_routes
 from image_to_3dlab import host as _host
 from image_to_3dlab import matte as _matte
 from image_to_3dlab.host import APPLE, NVIDIA
 from image_to_3dlab.provenance import QWEN_OUTPUT_RIGHTS
+
+# Catalogue entries that switch Mac-port vs CUDA stacks are built for *this* machine.
+_NVIDIA_HERE = _host.host_platform() == NVIDIA
 
 HF_HUB_DIR = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface")) / "hub"
 
@@ -221,7 +225,8 @@ CATALOG: tuple[Backend, ...] = (
         tradeoff=(
             "On a Mac it compiles locally and needs full Xcode for the Metal compiler. "
             "On NVIDIA Linux with the CUDA toolkit it compiles for your card, which runs "
-            "about twice as fast; otherwise it downloads a prebuilt CUDA build."
+            "about twice as fast; otherwise Linux and Windows download a prebuilt CUDA build "
+            "(driver 575+)."
         ),
         license_name="MIT (code + flow weights); DINOv3 License (bundled encoder)",
         license_url="https://huggingface.co/raven38/pixal3d-sv-q8_0-v1",
@@ -247,27 +252,44 @@ CATALOG: tuple[Backend, ...] = (
     ),
     Backend(
         id="hunyuan_xiong",
-        label="Hunyuan3D-MLX (Xiong, full pipeline)",
+        label=("Hunyuan3D-2.1 (CUDA)" if _NVIDIA_HERE
+               else "Hunyuan3D-MLX (Xiong, full pipeline)"),
         rank=2,
         best_for="Fast, clean results, and the quickest to run from a fresh clone.",
-        tradeoff="Shape and paint are separate venvs, each set up on its own.",
-        license_name="MIT (code); Tencent Hunyuan Community License (weights)",
+        tradeoff=(
+            "Official CUDA checkout under vendor/hunyuan3d-cuda; needs a C++/CUDA "
+            "toolchain to build the paint rasterizer."
+            if _NVIDIA_HERE else
+            "Shape and paint are separate MLX venvs, each set up on its own."
+        ),
+        license_name=("Tencent Hunyuan Community License (code + weights)" if _NVIDIA_HERE
+                      else "MIT (code); Tencent Hunyuan Community License (weights)"),
         license_url="https://huggingface.co/tencent/Hunyuan3D-2.1",
-        install="uv sync + hunyuan_mlx/download_weights.py",
-        upstream=("Hunyuan3D-2.1", "https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1"),
-        setup_minutes=25,
-        build_probes=(venv_python(REPO / "hunyuan_mlx" / "shape"),
-                      venv_python(REPO / "hunyuan_mlx" / "paint")),
+        install=("scripts/bootstrap_hunyuan_cuda.py" if _NVIDIA_HERE
+                 else "uv sync + hunyuan_mlx/download_weights.py"),
+        runs_on=(APPLE, NVIDIA),
+        setup_minutes=40 if _NVIDIA_HERE else 25,
+        build_probes=((cuda_routes.hunyuan_python(),) if _NVIDIA_HERE else
+                      (venv_python(REPO / "hunyuan_mlx" / "shape"),
+                       venv_python(REPO / "hunyuan_mlx" / "paint"))),
         caveat=(
             "The Hunyuan weights are not licensed for use in the EU, the UK or South Korea. "
             "Check the licence before downloading."
         ),
         weights=(
-            WeightSet("Hunyuan3D-2 shape (default route)", "tencent/Hunyuan3D-2",
-                      int(5.0 * GB), REPO / "hunyuan_mlx" / "shape" / "weights" / "Hunyuan3D-2"),
-            WeightSet("Hunyuan3D-2.1 paint (PBR), MLX port",
-                      "zimengxiong/hunyuan3d-mlx-paint-large", int(8.7 * GB),
-                      REPO / "hunyuan_mlx" / "paint" / "weights"),
+            (
+                WeightSet("Hunyuan3D-2.1 shape + paint", "tencent/Hunyuan3D-2.1",
+                          int(10.0 * GB),
+                          REPO / "vendor" / "hunyuan3d-cuda" / "weights",
+                          note="Official CUDA weights written by bootstrap_hunyuan_cuda.py."),
+            ) if _NVIDIA_HERE else (
+                WeightSet("Hunyuan3D-2 shape (default route)", "tencent/Hunyuan3D-2",
+                          int(5.0 * GB),
+                          REPO / "hunyuan_mlx" / "shape" / "weights" / "Hunyuan3D-2"),
+                WeightSet("Hunyuan3D-2.1 paint (PBR), MLX port",
+                          "zimengxiong/hunyuan3d-mlx-paint-large", int(8.7 * GB),
+                          REPO / "hunyuan_mlx" / "paint" / "weights"),
+            )
         ),
     ),
     Backend(
@@ -285,7 +307,7 @@ CATALOG: tuple[Backend, ...] = (
         upstream=("Hunyuan3D-2.1", "https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1"),
         automated_setup=False,
         setup_minutes=40,
-        build_probes=(REPO / "vendor" / "hunyuan-mlx" / ".venv" / "bin" / "python",
+        build_probes=(venv_python(REPO / "vendor" / "hunyuan-mlx"),
                       venv_python(REPO / "hunyuan_mlx" / "paint")),
         caveat=(
             "The Hunyuan weights are not licensed for use in the EU, the UK or South Korea. "
@@ -333,17 +355,22 @@ CATALOG: tuple[Backend, ...] = (
     ),
     Backend(
         id="trellis",
-        label="TRELLIS.2 (clean port)",
+        label="TRELLIS.2 (CUDA)" if _NVIDIA_HERE else "TRELLIS.2 (clean port)",
         rank=3,
         best_for="Highest fidelity, closest to the official demo.",
         tradeoff=(
+            "Official microsoft/TRELLIS.2 under vendor/trellis2-cuda. Needs the CUDA "
+            "toolkit (and on Windows, VS C++ build tools) to compile extensions. "
+            "Microsoft documents Linux; Windows is best-effort in this lab. "
+            "Bleaches flat/vector-style illustrations — prefer photographs."
+            if _NVIDIA_HERE else
             "Slowest, and its material model bleaches flat or vector-style illustrations. "
             "Prefer photographs or softly lit 3D-style references."
         ),
         license_name="MIT (code + weights); DINOv3 License (image encoder)",
         license_url="https://huggingface.co/microsoft/TRELLIS.2-4B",
-        install="viewer",
-        upstream=("TRELLIS.2", "https://github.com/microsoft/TRELLIS.2"),
+        install=("scripts/bootstrap_trellis_cuda.py" if _NVIDIA_HERE else "viewer"),
+        runs_on=(APPLE, NVIDIA),
         caveat=(
             "Its DINOv3 image encoder is gated: request access to "
             "facebook/dinov3-vitl16-pretrain-lvd1689m on Hugging Face (Meta approves by "
@@ -352,7 +379,7 @@ CATALOG: tuple[Backend, ...] = (
         ),
         setup_minutes=60,
         setup_fetches_weights=False,
-        build_probes=(venv_python(REPO / "vendor" / "trellis-space-mac"),),
+        build_probes=(cuda_routes.trellis_python(),),
         weights=(
             WeightSet("TRELLIS.2-4B", "microsoft/TRELLIS.2-4B", int(14.0 * GB),
                       HF_HUB_DIR / "models--microsoft--TRELLIS.2-4B"),
