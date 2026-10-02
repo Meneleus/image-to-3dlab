@@ -107,6 +107,15 @@ def ensure_venv() -> Path:
     return py
 
 
+def patch_custom_rasterizer_msvc_narrowing(raster: Path) -> None:
+    """Cast size_t torch shapes to int64_t so MSVC C++20 accepts grid_neighbor.cpp."""
+    if host.os_family() != "windows":
+        return
+    script = REPO / "scripts" / "patch_hunyuan_rasterizer_msvc_narrowing.py"
+    print(f"Patching custom_rasterizer for MSVC narrowing ({script.name})...", flush=True)
+    run([sys.executable, str(script), "--root", str(raster)])
+
+
 def install_cuda_extension(py: Path, target: Path, label: str) -> None:
     """Build + install a CUDA extension package (non-editable; Windows MSVC-safe)."""
     uv = shutil.which("uv")
@@ -144,6 +153,7 @@ def install_code(py: Path) -> None:
 
     raster = VENDOR / "hy3dpaint" / "custom_rasterizer"
     if raster.is_dir():
+        patch_custom_rasterizer_msvc_narrowing(raster)
         try:
             install_cuda_extension(py, raster, "custom_rasterizer")
         except subprocess.CalledProcessError as exc:

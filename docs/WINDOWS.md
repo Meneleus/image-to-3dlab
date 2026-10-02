@@ -118,7 +118,8 @@ What it does: clones `Tencent-Hunyuan/Hunyuan3D-2.1` → `vendor/hunyuan3d-cuda/
 the paint rasterizer (`custom_rasterizer`), fetches ~10 GB weights (asks first unless
 `--yes`). On Windows it sets `DISTUTILS_USE_SDK=1` and the same C++20 /
 `/Zc:preprocessor` flags as TRELLIS (required when an x64 Native Tools shell is
-already active — otherwise torch refuses the CUDA extension build).
+already active — otherwise torch refuses the CUDA extension build), and patches
+`grid_neighbor.cpp` so `size_t` torch shapes cast to `int64_t` (MSVC C2398).
 
 **Licence:** Tencent Community License — not for EU / UK / South Korea.
 
@@ -208,6 +209,7 @@ Clear stale builds: delete `vendor\trellis2-cuda\.i2l-build\FlexGEMM` (or at lea
 | flash-attn fails with `No module named 'psutil'` | Fixed: bootstrap installs `psutil` into the TRELLIS venv before the optional flash-attn build (`--no-build-isolation`). Still soft-fails to SDPA if the CUDA extension itself will not compile. Re-run bootstrap (or just let it retry the flash-attn step). |
 | Hunyuan `custom_rasterizer`: VC env active but `DISTUTILS_USE_SDK` not set | Fixed: Hunyuan bootstrap uses the same Windows CUDA build env as TRELLIS (`DISTUTILS_USE_SDK=1`, `/Zc:preprocessor`). Pull latest and re-run from an x64 Native Tools shell. |
 | Hunyuan / TRELLIS: `nvcc fatal: A single input file is required` with `/Zc:` or `/std:c++20` on the nvcc line | Bare MSVC host flags reached nvcc. Pull latest (nvcc sanitizer wraps them as `-Xcompiler=…`; env no longer puts them in `CXXFLAGS`). Wipe the extension `build\` folder and re-run. |
+| Hunyuan `custom_rasterizer` MSVC `C2398` narrowing in `grid_neighbor.cpp` | Pull latest; bootstrap runs `patch_hunyuan_rasterizer_msvc_narrowing.py` (casts `size_t` torch shapes to `int64_t`). Wipe `hy3dpaint\custom_rasterizer\build` and re-run. |
 | TRELLIS fails only on Windows | Microsoft tests Linux; try the same bootstrap on Linux NVIDIA, or WSL2 with GPU. |
 | Generate Image is very slow / CPU | `nvidia-smi` must see the card; update the driver and reopen the terminal. |
 | Finish cannot find Blender | Install from blender.org, or set `I2L_BLENDER`. |

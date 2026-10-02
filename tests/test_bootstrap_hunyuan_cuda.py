@@ -88,3 +88,24 @@ def test_windows_cuda_build_env_shared_with_trellis(monkeypatch):
     assert env["DISTUTILS_USE_SDK"] == "1"
     assert "/std:" not in env["CL"]
     assert "/Zc:preprocessor" in env["CL"]
+
+
+def test_patch_custom_rasterizer_msvc_narrowing_runs_on_windows(monkeypatch, tmp_path):
+    monkeypatch.setattr(boot.host, "os_family", lambda: "windows")
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        seen.append(list(cmd))
+
+    monkeypatch.setattr(boot, "run", fake_run)
+    raster = tmp_path / "custom_rasterizer"
+    boot.patch_custom_rasterizer_msvc_narrowing(raster)
+    assert len(seen) == 1
+    assert "patch_hunyuan_rasterizer_msvc_narrowing.py" in seen[0][1]
+    assert str(raster) in seen[0]
+
+
+def test_patch_custom_rasterizer_msvc_narrowing_noop_off_windows(monkeypatch, tmp_path):
+    monkeypatch.setattr(boot.host, "os_family", lambda: "linux")
+    monkeypatch.setattr(boot, "run", lambda *a, **k: pytest.fail("should not run"))
+    boot.patch_custom_rasterizer_msvc_narrowing(tmp_path)
