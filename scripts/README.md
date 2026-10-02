@@ -212,6 +212,7 @@ The `*_pose.py` files are pure curve maths with no `bpy`, which is why they have
 | `patch_ovoxel_msvc_narrowing.py` | Fix MSVC build breaks in vendored o-voxel. |
 | `patch_hunyuan_rasterizer_msvc_narrowing.py` | Fix MSVC / LibTorch breaks in Hunyuan `custom_rasterizer`. |
 | `patch_hunyuan_mesh_utils_blender.py` | Stop Hunyuan paint requiring pip `bpy` in the vendor venv. |
+| `patch_basicsr_functional_tensor.py` | Fix basicsr vs modern torchvision so `realesrgan` can import. |
 | `patch_metal_hashmap_miss.py` | Fix the unchecked hashmap miss in the Metal dual-contouring kernel. |
 | `patch_mtlbvh_production_traversal.py` | Apply the production-scale MtlBVH traversal and dispatch-lifetime fixes. |
 | `patch_rignet_macos_compat.py` | Make the vendored RigNet checkout run inference on macOS / Apple Silicon. |

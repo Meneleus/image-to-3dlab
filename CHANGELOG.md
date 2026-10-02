@@ -76,6 +76,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `onnxruntime` on Linux), and `msvc-runtime` on Windows into
   `vendor/hunyuan3d-cuda/.venv`. A fresh bootstrap no longer leaves those as a
   manual `uv pip install` into the lab root `.venv`.
+- **Hunyuan realesrgan / basicsr vs torchvision:** after installing realesrgan,
+  bootstrap runs `patch_basicsr_functional_tensor.py` (point
+  `rgb_to_grayscale` at `torchvision.transforms.functional`) and verifies
+  `from realesrgan import RealESRGANer` in the vendor venv.
 - **Hunyuan paint without pip `bpy`:** `patch_hunyuan_mesh_utils_blender.py`
   + `image_to_3dlab.obj_to_glb` convert OBJ→GLB via Finish’s `blender.exe` /
   `I2L_BLENDER` (then bpy / trimesh). `hunyuan_cuda_generate.py --shape-only`

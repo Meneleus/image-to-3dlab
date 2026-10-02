@@ -143,6 +143,25 @@ def patch_mesh_utils_blender(diff: Path) -> None:
     run([sys.executable, str(script), "--root", str(diff)])
 
 
+def patch_basicsr_for_torchvision(py: Path) -> None:
+    """basicsr still imports removed torchvision.transforms.functional_tensor."""
+    script = REPO / "scripts" / "patch_basicsr_functional_tensor.py"
+    print(f"Patching basicsr for modern torchvision ({script.name})...", flush=True)
+    run([sys.executable, str(script), "--python", str(py)])
+
+
+def verify_realesrgan_import(py: Path) -> None:
+    """Fail fast if paint's RealESRGAN path still cannot import in this venv."""
+    print("Checking `from realesrgan import RealESRGANer`...", flush=True)
+    try:
+        run([str(py), "-c", "from realesrgan import RealESRGANer"])
+    except subprocess.CalledProcessError as exc:
+        raise SystemExit(
+            "realesrgan could not import in the Hunyuan vendor venv (basicsr vs "
+            "torchvision?). Re-run bootstrap after pull, or see docs/WINDOWS.md."
+        ) from exc
+
+
 def install_cuda_extension(py: Path, target: Path, label: str) -> None:
     """Build + install a CUDA extension package (non-editable; Windows MSVC-safe)."""
     uv = shutil.which("uv")
@@ -175,6 +194,9 @@ def install_code(py: Path) -> None:
     # `--python` is the Hunyuan vendor venv (vendor/hunyuan3d-cuda/.venv), not
     # the lab root .venv — Generate 3D uses hunyuan_python() from that checkout.
     run([uv, "pip", "install", "--python", str(py), *runtime_packages()])
+    # realesrgan → basicsr still imports removed torchvision.transforms.functional_tensor.
+    patch_basicsr_for_torchvision(py)
+    verify_realesrgan_import(py)
 
     if host.os_family() == "windows":
         print("\nPatching torch.utils.cpp_extension for C++20...", flush=True)
