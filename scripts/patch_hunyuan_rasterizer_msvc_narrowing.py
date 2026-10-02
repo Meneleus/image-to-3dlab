@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Fix MSVC C2398 narrowing in Hunyuan ``custom_rasterizer`` ``grid_neighbor.cpp``.
+"""Fix MSVC / LibTorch breaks in Hunyuan ``custom_rasterizer``.
 
-On Windows / VS 2022–18 with ``/std:c++20``, brace-init of libtorch shapes from
-``size_t`` (``vector::size()``, ``size()/n``) into ``int64_t`` dims is a
-narrowing conversion (C2398). Cast those sizes to ``int64_t``. Harmless on Linux.
+On Windows / VS 2022–18:
 
-Only exact anchors are replaced; re-running is idempotent. Patterns that appear
-in both ``build_hierarchy`` and ``build_hierarchy_with_feat`` are replaced in
-all occurrences.
+* C2398: brace-init of libtorch shapes from ``size_t`` into ``int64_t`` dims —
+  cast those sizes to ``int64_t``.
+* LNK2001: ``data_ptr<long>()`` / ``long*`` — on Windows ``long`` is 32-bit, so
+  LibTorch does not export ``data_ptr<long>``. Use ``int64_t`` instead (also
+  fixes ``(long)maxint`` truncating the z-buffer sentinel).
+
+Harmless on Linux (same types there). Only exact anchors; re-running is
+idempotent. Patterns shared by both hierarchy helpers / CPU+GPU rasterizers
+are replaced in all occurrences.
 
     python scripts/patch_hunyuan_rasterizer_msvc_narrowing.py
     python scripts/patch_hunyuan_rasterizer_msvc_narrowing.py \\
@@ -24,10 +28,13 @@ REPO = Path(__file__).resolve().parents[1]
 DEFAULT_ROOT = REPO / "vendor" / "hunyuan3d-cuda" / "hy3dpaint" / "custom_rasterizer"
 
 GRID_NEIGHBOR = "lib/custom_rasterizer_kernel/grid_neighbor.cpp"
+RASTERIZER_CPP = "lib/custom_rasterizer_kernel/rasterizer.cpp"
+RASTERIZER_GPU = "lib/custom_rasterizer_kernel/rasterizer_gpu.cu"
 
 # Longer ``seq2pos.size() / 3, 3`` must come before the single-dim form so we
 # do not partially rewrite inside the two-dim brace-init.
 REPLACEMENTS: tuple[tuple[str, str, str], ...] = (
+    # --- C2398: size_t → int64_t torch shapes ---
     (
         GRID_NEIGHBOR,
         "torch::zeros({seq2pos.size() / 3, 3}, float_options)",
@@ -68,6 +75,47 @@ REPLACEMENTS: tuple[tuple[str, str, str], ...] = (
         GRID_NEIGHBOR,
         "torch::zeros({grids[i].downsample_seq.size()}, int64_options)",
         "torch::zeros({static_cast<int64_t>(grids[i].downsample_seq.size())}, int64_options)",
+    ),
+    # --- LNK2001: long → int64_t for LibTorch data_ptr on Windows ---
+    (
+        GRID_NEIGHBOR,
+        "long* nptr = grid_neighbors[i].data_ptr<long>();",
+        "int64_t* nptr = grid_neighbors[i].data_ptr<int64_t>();",
+    ),
+    (
+        GRID_NEIGHBOR,
+        "long* dptr = grid_evencorners[i].data_ptr<long>();",
+        "int64_t* dptr = grid_evencorners[i].data_ptr<int64_t>();",
+    ),
+    (
+        GRID_NEIGHBOR,
+        "dptr = grid_oddcorners[i].data_ptr<long>();",
+        "dptr = grid_oddcorners[i].data_ptr<int64_t>();",
+    ),
+    (
+        GRID_NEIGHBOR,
+        "long* dptr = grid_downsamples[i].data_ptr<long>();",
+        "int64_t* dptr = grid_downsamples[i].data_ptr<int64_t>();",
+    ),
+    (
+        RASTERIZER_CPP,
+        "* (long)maxint;",
+        "* (int64_t)maxint;",
+    ),
+    (
+        RASTERIZER_CPP,
+        "z_min.data_ptr<long>()",
+        "z_min.data_ptr<int64_t>()",
+    ),
+    (
+        RASTERIZER_GPU,
+        "* (long)maxint;",
+        "* (int64_t)maxint;",
+    ),
+    (
+        RASTERIZER_GPU,
+        "z_min.data_ptr<long>()",
+        "z_min.data_ptr<int64_t>()",
     ),
 )
 

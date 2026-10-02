@@ -108,11 +108,11 @@ def ensure_venv() -> Path:
 
 
 def patch_custom_rasterizer_msvc_narrowing(raster: Path) -> None:
-    """Cast size_t torch shapes to int64_t so MSVC C++20 accepts grid_neighbor.cpp."""
+    """MSVC C2398 narrowing + long→int64_t LibTorch ABI fixes for custom_rasterizer."""
     if host.os_family() != "windows":
         return
     script = REPO / "scripts" / "patch_hunyuan_rasterizer_msvc_narrowing.py"
-    print(f"Patching custom_rasterizer for MSVC narrowing ({script.name})...", flush=True)
+    print(f"Patching custom_rasterizer for MSVC ({script.name})...", flush=True)
     run([sys.executable, str(script), "--root", str(raster)])
 
 
@@ -160,8 +160,8 @@ def install_code(py: Path) -> None:
             tip = ""
             if host.os_family() == "windows":
                 tip = (" Install Visual Studio Build Tools with C++, and a CUDA toolkit "
-                       "matching PyTorch. Open an x64 Native Tools shell, then re-run. "
-                       "See docs/WINDOWS.md.")
+                       "matching PyTorch. From a shell where `cl` works — e.g. "
+                       "`VsDevCmd.bat -arch=amd64` — then re-run. See docs/WINDOWS.md.")
             raise SystemExit(f"custom_rasterizer failed to build.{tip}") from exc
 
     # DifferentiableRenderer: prefer setup.py / pip when present; else compile script.

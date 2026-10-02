@@ -1,4 +1,4 @@
-"""Hunyuan custom_rasterizer MSVC C2398 patch: real anchors, idempotent."""
+"""Hunyuan custom_rasterizer MSVC patches: C2398 narrowing + long→int64_t ABI."""
 
 from __future__ import annotations
 
@@ -7,22 +7,37 @@ from pathlib import Path
 import patch_hunyuan_rasterizer_msvc_narrowing as patch
 import pytest
 
-# Minimal upstream-shaped excerpt covering both hierarchy helpers.
 GRID_NEIGHBOR = """
     texture_positions[0] = torch::zeros({seq2pos.size() / 3, 3}, float_options);
     texture_positions[1] = torch::zeros({seq2pos.size() / 3}, float_options);
     grid_neighbors[i] = torch::zeros({grids[i].seq2grid.size(), 9}, int64_options);
+    long* nptr = grid_neighbors[i].data_ptr<long>();
     grid_evencorners[i] = torch::zeros({grids[i].seq2evencorner.size()}, int64_options);
     grid_oddcorners[i] = torch::zeros({grids[i].seq2oddcorner.size()}, int64_options);
+    long* dptr = grid_evencorners[i].data_ptr<long>();
+    dptr = grid_oddcorners[i].data_ptr<long>();
     grid_downsamples[i] = torch::zeros({grids[i].downsample_seq.size()}, int64_options);
+    long* dptr = grid_downsamples[i].data_ptr<long>();
 
     texture_positions[0] = torch::zeros({seq2pos.size() / 3, 3}, float_options);
     texture_positions[1] = torch::zeros({seq2pos.size() / 3}, float_options);
     texture_feats[0] = torch::zeros({seq2feat.size() / feat_channel, feat_channel}, float_options);
     grid_neighbors[i] = torch::zeros({grids[i].seq2grid.size(), 9}, int64_options);
+    long* nptr = grid_neighbors[i].data_ptr<long>();
     grid_evencorners[i] = torch::zeros({grids[i].seq2evencorner.size()}, int64_options);
     grid_oddcorners[i] = torch::zeros({grids[i].seq2oddcorner.size()}, int64_options);
+    long* dptr = grid_evencorners[i].data_ptr<long>();
+    dptr = grid_oddcorners[i].data_ptr<long>();
     grid_downsamples[i] = torch::zeros({grids[i].downsample_seq.size()}, int64_options);
+    long* dptr = grid_downsamples[i].data_ptr<long>();
+"""
+
+RASTERIZER = """
+    INT64 maxint = (INT64)MAXINT * (INT64)MAXINT + (MAXINT - 1);
+    auto z_min = torch::ones({height, width}, INT64_options) * (long)maxint;
+    (INT64*)z_min.data_ptr<long>(), occlusion_truncation, width, height, num_vertices, num_faces, i);
+    (INT64*)z_min.data_ptr<long>(), occlusion_truncation, width, height, num_vertices, num_faces, i);
+    findices.data_ptr<int>(), (INT64*)z_min.data_ptr<long>(), width, height, num_vertices, num_faces, barycentric.data_ptr<float>(), i);
 """
 
 
@@ -56,25 +71,37 @@ def test_patch_source_missing_anchor_raises():
         patch.patch_source("nope", "old", "new")
 
 
-def test_apply_to_tree_patches_all_sites(tmp_path):
+def test_apply_to_tree_patches_narrowing_and_long_abi(tmp_path):
     root = tmp_path / "custom_rasterizer"
-    path = root / patch.GRID_NEIGHBOR
-    path.parent.mkdir(parents=True)
-    path.write_text(GRID_NEIGHBOR, encoding="utf-8")
+    files = {
+        patch.GRID_NEIGHBOR: GRID_NEIGHBOR,
+        patch.RASTERIZER_CPP: RASTERIZER,
+        patch.RASTERIZER_GPU: RASTERIZER,
+    }
+    for rel, text in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
 
     states = patch.apply_to_tree(root)
     assert all(s.startswith("PATCHED") for s in states)
     states2 = patch.apply_to_tree(root)
     assert all(s.startswith("APPLIED") for s in states2)
 
-    text = path.read_text(encoding="utf-8")
-    assert "torch::zeros({seq2pos.size()" not in text
-    assert "torch::zeros({grids[i]." not in text
-    assert text.count("static_cast<int64_t>(seq2pos.size() / 3)") == 4  # 2x 2d + 2x 1d
-    assert text.count("static_cast<int64_t>(grids[i].seq2grid.size())") == 2
-    assert "static_cast<int64_t>(feat_channel)" in text
-    # No unpatched size() brace-inits left for the reported patterns.
-    assert "zeros({seq2feat.size()" not in text
+    grid = (root / patch.GRID_NEIGHBOR).read_text(encoding="utf-8")
+    assert "data_ptr<long>()" not in grid
+    assert "long* nptr" not in grid
+    assert "long* dptr" not in grid
+    assert grid.count("data_ptr<int64_t>()") == 8
+    assert "torch::zeros({seq2pos.size()" not in grid
+    assert "static_cast<int64_t>(feat_channel)" in grid
+
+    for rel in (patch.RASTERIZER_CPP, patch.RASTERIZER_GPU):
+        text = (root / rel).read_text(encoding="utf-8")
+        assert "(long)maxint" not in text
+        assert "(int64_t)maxint" in text
+        assert "data_ptr<long>()" not in text
+        assert text.count("data_ptr<int64_t>()") == 3
 
 
 def test_replacements_cover_user_reported_patterns():
@@ -87,8 +114,14 @@ def test_replacements_cover_user_reported_patterns():
         "seq2evencorner.size()",
         "seq2oddcorner.size()",
         "downsample_seq.size()",
+        "data_ptr<long>()",
+        "(long)maxint",
     ):
         assert needle in joined_old, needle
+    rels = {rel for rel, _, _ in patch.REPLACEMENTS}
+    assert patch.GRID_NEIGHBOR in rels
+    assert patch.RASTERIZER_CPP in rels
+    assert patch.RASTERIZER_GPU in rels
 
 
 def test_against_upstream_checkout_if_present():

@@ -57,9 +57,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sanitize_nvcc_flags` wrap host flags as `-Xcompiler=…` and keep `-std=c++20`
   for device code — fixes Hunyuan `custom_rasterizer`
   `nvcc fatal: A single input file is required…`.
-- **`scripts/patch_hunyuan_rasterizer_msvc_narrowing.py`:** cast `size_t` torch
-  shapes in Hunyuan `custom_rasterizer` `grid_neighbor.cpp` to `int64_t` so MSVC
-  C++20 stops with C2398; bootstrap applies it before building on Windows.
+- **`scripts/patch_hunyuan_rasterizer_msvc_narrowing.py`:** Hunyuan
+  `custom_rasterizer` MSVC fixes before build: cast `size_t` torch shapes to
+  `int64_t` (C2398), and replace `long` / `data_ptr<long>()` / `(long)maxint`
+  with `int64_t` so the link finds LibTorch symbols (LNK2001) and the z-buffer
+  sentinel is not truncated on Windows.
+- **`docs/WINDOWS.md`:** note that CUDA builds need `VsDevCmd.bat -arch=amd64`
+  (or x64 Native Tools); a plain Shell has no `cl` on PATH.
 
 ## [0.3.6] - 2026-10-01
 
