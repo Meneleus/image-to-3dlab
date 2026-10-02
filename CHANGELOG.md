@@ -71,11 +71,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   MSVC-safe cxx flags and nvcc `/Zc:preprocessor` (CUDA 13 CCCL C1189). Install
   env gets the shared Windows CUDA build helpers; failure hints no longer blame
   missing Build Tools when `cl` is already on PATH.
-- **Hunyuan CUDA bootstrap** installs `pymeshlab==2025.7.post1`, rembg’s
-  ORT (`onnxruntime-gpu` on Windows, `onnxruntime` on Linux), and
-  `msvc-runtime` on Windows into `vendor/hunyuan3d-cuda/.venv`. `hy3dshape`
-  postprocess and rembg need those; a fresh bootstrap no longer leaves them
-  as a manual `uv pip install` into the lab root `.venv`.
+- **Hunyuan CUDA bootstrap** installs `pymeshlab==2025.7.post1`, `realesrgan`
+  (paint `image_super_utils`), rembg’s ORT (`onnxruntime-gpu` on Windows,
+  `onnxruntime` on Linux), and `msvc-runtime` on Windows into
+  `vendor/hunyuan3d-cuda/.venv`. A fresh bootstrap no longer leaves those as a
+  manual `uv pip install` into the lab root `.venv`.
 - **Hunyuan paint without pip `bpy`:** `patch_hunyuan_mesh_utils_blender.py`
   + `image_to_3dlab.obj_to_glb` convert OBJ→GLB via Finish’s `blender.exe` /
   `I2L_BLENDER` (then bpy / trimesh). `hunyuan_cuda_generate.py --shape-only`

@@ -53,12 +53,13 @@ REALESRGAN_URL = (
 # pymeshlab: hy3dshape.postprocessors imports it; upstream pins 2022.2.post3 (no
 # Windows py3.11 wheel). 2025.7.post1 is the wheel that works on REDFURY.
 # rembg does not always pull onnxruntime; install it explicitly into this vendor venv.
+# realesrgan: hy3dpaint image_super_utils imports it at paint load_models.
 PIP_PACKAGES = [
     "ninja", "pybind11",
     "transformers==4.46.0", "diffusers==0.30.0", "accelerate==1.1.1",
     "huggingface-hub==0.30.2", "safetensors==0.4.4",
     "numpy<2", "scipy", "einops", "pandas",
-    "opencv-python", "imageio", "scikit-image", "rembg",
+    "opencv-python", "imageio", "scikit-image", "rembg", "realesrgan",
     "trimesh", "pymeshlab==2025.7.post1", "pygltflib", "xatlas", "omegaconf", "pyyaml",
     "tqdm", "psutil", "timm", "torchmetrics", "pydantic",
 ]
