@@ -30,11 +30,12 @@ _SECTION = re.compile(r"^### (\w+)", re.MULTILINE)
 
 def brand() -> dict[str, str]:
     """The name shown to people. One file, so a rename is a one-line change."""
-    return json.loads(BRAND_FILE.read_text())
+    return json.loads(BRAND_FILE.read_text(encoding="utf-8"))
 
 
 def read_changelog() -> str:
-    return CHANGELOG.read_text()
+    # Always UTF-8: Windows defaults to cp1252 and crashes on curly quotes in CHANGELOG.
+    return CHANGELOG.read_text(encoding="utf-8")
 
 
 HEADLINE_MAX = 140

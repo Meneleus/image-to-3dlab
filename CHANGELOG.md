@@ -64,6 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sentinel is not truncated on Windows.
 - **`docs/WINDOWS.md`:** note that CUDA builds need `VsDevCmd.bat -arch=amd64`
   (or x64 Native Tools); a plain Shell has no `cl` on PATH.
+- **Viewer on Windows:** read `CHANGELOG.md` and other repo/text files as UTF-8
+  so curly quotes no longer crash the welcome card under cp1252.
 
 ## [0.3.6] - 2026-10-01
 

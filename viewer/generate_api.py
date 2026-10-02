@@ -244,7 +244,10 @@ def mlx_attention_status(vendor: Path | None = None, dispatch: Path | None = Non
     vendor = vendor or TRELLIS_VENDOR
     dispatch = dispatch or MLX_DISPATCH_FILE
     try:
-        patched = dispatch.is_file() and MLX_DISPATCH_MARKER in dispatch.read_text()
+        patched = (
+            dispatch.is_file()
+            and MLX_DISPATCH_MARKER in dispatch.read_text(encoding="utf-8")
+        )
     except OSError:
         patched = False
     package = any((vendor / ".venv" / "lib").glob("python*/site-packages/mlx"))
@@ -594,7 +597,7 @@ def uncut_image_error(border_fraction: float) -> str:
 
 def _baseline() -> dict[str, float]:
     try:
-        data = json.loads(BASELINE_PATH.read_text())
+        data = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
         seconds = data.get("seconds", data.get("stages", {}))
         return {str(k): float(v) for k, v in seconds.items() if v is not None}
     except (OSError, ValueError, TypeError):
@@ -606,7 +609,7 @@ def _update_baseline(job: Job) -> None:
     if not job.stage_durations:
         return
     try:
-        data = json.loads(BASELINE_PATH.read_text())
+        data = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError):
         data = {"schema_version": 1}
     seconds = data.setdefault("seconds", {})
@@ -958,7 +961,7 @@ def _reconcile_orphaned_jobs(output_root: Path) -> list[str]:
     for pid_file in sorted(output_root.rglob("pid")):
         directory = pid_file.parent
         try:
-            pid, owner = processes.parse_pid_record(pid_file.read_text())
+            pid, owner = processes.parse_pid_record(pid_file.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             pid_file.unlink(missing_ok=True)
             continue
