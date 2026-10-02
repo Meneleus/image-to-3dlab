@@ -25,7 +25,8 @@ def test_windows_guide_documents_trellis_cuda_compile_flags():
                    "CUDA Toolkit", "D9025", "c++17", "cpp_extension", "build.ninja",
                    "_i2l_ensure_msvc_cccl_flags", "custom_rasterizer",
                    "-Xcompiler", "single input file",
-                   "VsDevCmd.bat", "-arch=amd64", "data_ptr"):
+                   "VsDevCmd.bat", "-arch=amd64", "data_ptr",
+                   "patch_sf3d_windows_cuda_ext", "texture_baker", "C1189"):
         assert needle in text, needle
 
 

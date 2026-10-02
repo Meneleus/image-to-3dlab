@@ -11,7 +11,7 @@ route.
 |---|---|---|
 | **Pixal3D** | Yes | Downloads a CUDA 12 prebuilt (driver **575+**). No Visual Studio needed. |
 | **Generate Image** (Qwen-Image) | Yes | Prebuilt CUDA `sd-cli`; CUDA runtime is bundled. |
-| **Stable Fast 3D** | Yes | Needs **Visual Studio Build Tools** (C++) to compile the texture baker. |
+| **Stable Fast 3D** | Yes | Needs **Visual Studio C++ tools** (`cl` on PATH) to compile the texture baker. Bootstrap patches MSVC/CUDA 13 flags first. |
 | **TRELLIS.2** | Yes (CUDA) | `scripts/bootstrap_trellis_cuda.py` clones official microsoft/TRELLIS.2 into `vendor/trellis2-cuda`. Needs CUDA toolkit + VS C++ tools. Microsoft only documents Linux; Windows is best-effort. |
 | **Hunyuan3D-2.1** | Yes (CUDA) | `scripts/bootstrap_hunyuan_cuda.py` clones official Tencent Hunyuan3D-2.1 into `vendor/hunyuan3d-cuda`. Officially supports Windows. |
 | **Hunyuan3D-MLX (dgrauet)** | No | Apple MLX only. Prefer the CUDA Hunyuan route above. |
@@ -148,6 +148,27 @@ vendor\hunyuan3d-cuda\.venv\Scripts\python.exe scripts\hunyuan_cuda_generate.py 
 In the viewer this is the **Hunyuan3D (shape + paint)** dropdown entry (same id as the
 Mac MLX Xiong route; the lab picks CUDA automatically on NVIDIA).
 
+### Stable Fast 3D (CUDA baker)
+
+```powershell
+.venv\Scripts\python.exe scripts\bootstrap_sf3d.py
+# or: .\scripts\bootstrap_sf3d.ps1
+```
+
+Compiles `texture_baker` (CUDA when `nvcc` matches PyTorch) and `uv_unwrapper`. On
+Windows, `scripts/bootstrap_sf3d.py` runs `patch_sf3d_windows_cuda_ext.py` first so
+those `setup.py` files get MSVC-safe cxx flags and nvcc host flags
+(`/std:c++20`, `/Zc:preprocessor` via `-Xcompiler=`) — upstream only adds
+`/Zc:preprocessor` inside `debug_mode`, which is why a normal release build hits
+CCCL **C1189** on CUDA 13 + modern MSVC. The install env also gets the same
+`DISTUTILS_USE_SDK=1` / `CL` Zc flags as TRELLIS/Hunyuan.
+
+**Shell:** same as TRELLIS/Hunyuan — `VsDevCmd.bat -arch=amd64` (or x64 Native Tools)
+before bootstrap so `cl` is the 64-bit toolchain.
+
+If compile fails and `cl` is already on PATH, the hint names the preprocessor/flags
+issue — it does **not** tell you to install Build Tools again.
+
 ## CLI (quick routes)
 
 ```powershell
@@ -218,7 +239,8 @@ Clear stale builds: delete `vendor\trellis2-cuda\.i2l-build\FlexGEMM` (or at lea
 | Installer says no NVIDIA GPU | Install/update the NVIDIA driver; reopen PowerShell; `nvidia-smi` must work. |
 | PyTorch stays on CPU | Re-run the installer, or install from the URL `python -m image_to_3dlab.host torch-index` prints. |
 | Pixal3D refuses the prebuilt | Update the driver to **575+**. |
-| TRELLIS/Hunyuan/SF3D compile fails | Install VS Build Tools (C++) + a CUDA toolkit matching PyTorch; reopen the “x64 Native Tools” shell and re-run the bootstrap. |
+| TRELLIS/Hunyuan/SF3D compile fails and `cl` is missing | Install VS / Build Tools (C++) + a CUDA toolkit matching PyTorch; open “x64 Native Tools” / `VsDevCmd.bat -arch=amd64` and re-run. |
+| SF3D `texture_baker` C1189 / traditional preprocessor / Linux flags on MSVC | Pull latest; bootstrap runs `patch_sf3d_windows_cuda_ext.py`. Wipe `vendor\stable-fast-3d\texture_baker\build` (and `uv_unwrapper\build`) and re-run from an x64 Native Tools shell. |
 | `D9025` flipping `/std:c++20` ↔ `/std:c++17` on FlexGEMM | Torch and/or `setup.py` still emit C++17, or a stale `build\` ninja file. Pull latest, delete `vendor\trellis2-cuda\.i2l-build\FlexGEMM`, unset any hand-set `CL`/`CXXFLAGS` `/std:`, re-run bootstrap. See [above](#cuda-extension-builds-trellis2). |
 | Bootstrap says nvdiffrast is missing `/Zc:preprocessor` after “Patched…” | Fixed: pull latest (CCCL ensure hook). Delete `vendor\trellis2-cuda\.i2l-build\nvdiffrast` and re-run. |
 | o-voxel MSVC `C2398` / `C3688` (`…d` float suffix) / `C4838` | Pull latest; bootstrap runs `patch_ovoxel_msvc_narrowing.py`. Wipe `vendor\trellis2-cuda\o-voxel\build` and re-run. |

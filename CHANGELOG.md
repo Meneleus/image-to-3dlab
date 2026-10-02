@@ -66,6 +66,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (or x64 Native Tools); a plain Shell has no `cl` on PATH.
 - **Viewer on Windows:** read `CHANGELOG.md` and other repo/text files as UTF-8
   so curly quotes no longer crash the welcome card under cp1252.
+- **SF3D Windows CUDA extensions:** `scripts/patch_sf3d_windows_cuda_ext.py`
+  (wired into `bootstrap_sf3d.py`) gives `texture_baker` / `uv_unwrapper`
+  MSVC-safe cxx flags and nvcc `/Zc:preprocessor` (CUDA 13 CCCL C1189). Install
+  env gets the shared Windows CUDA build helpers; failure hints no longer blame
+  missing Build Tools when `cl` is already on PATH.
 
 ## [0.3.6] - 2026-10-01
 

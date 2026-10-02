@@ -200,6 +200,7 @@ The `*_pose.py` files are pure curve maths with no `bpy`, which is why they have
 | `patch_pixal3d_steps.py` | Let Pixal3D (pixal3d.cpp) run fewer sampling steps, via `PIXAL3D_STEPS=N`. |
 | `photo_paint.py` | Paint a finished model with the real pixels of its source photos, where they can see. |
 | `patch_sf3d_cpu_baker.py` | Let SF3D's texture baker run on the CPU while the model runs on an NVIDIA GPU. |
+| `patch_sf3d_windows_cuda_ext.py` | Make SF3D `texture_baker` / `uv_unwrapper` compile on Windows MSVC + CUDA 13.x. |
 | `patch_trellis_no_bria.py` | Disable TRELLIS' configured background model for license-controlled runs. |
 | `patch_trellis_mlx_attention.py` | Add an `mlx` sparse-attention backend to a vendored TRELLIS.2 checkout. |
 | `render_glb_comparison.py` | Render several GLBs from one fixed camera and lay them out as a comparison image. |
