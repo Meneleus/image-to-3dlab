@@ -55,6 +55,7 @@ REALESRGAN_URL = (
 # rembg does not always pull onnxruntime; install it explicitly into this vendor venv.
 # realesrgan: hy3dpaint image_super_utils imports it at paint load_models.
 # pytorch-lightning: hy3dpaint hunyuanpaintpbr/unet/model.py imports pytorch_lightning.
+# fast_simplification: hy3dpaint simplify_mesh_utils / trimesh simplify_quadric_decimation.
 PIP_PACKAGES = [
     "ninja", "pybind11",
     "transformers==4.46.0", "diffusers==0.30.0", "accelerate==1.1.1",
@@ -63,7 +64,7 @@ PIP_PACKAGES = [
     "opencv-python", "imageio", "scikit-image", "rembg", "realesrgan",
     "trimesh", "pymeshlab==2025.7.post1", "pygltflib", "xatlas", "omegaconf", "pyyaml",
     "tqdm", "psutil", "timm", "torchmetrics", "pydantic",
-    "pytorch-lightning==1.9.5",
+    "pytorch-lightning==1.9.5", "fast_simplification",
 ]
 # pymeshlab's Windows wheels need the MSVC runtime DLLs beside the interpreter.
 WINDOWS_PIP_PACKAGES = ("msvc-runtime",)

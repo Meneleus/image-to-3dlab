@@ -72,11 +72,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   env gets the shared Windows CUDA build helpers; failure hints no longer blame
   missing Build Tools when `cl` is already on PATH.
 - **Hunyuan CUDA bootstrap** installs `pymeshlab==2025.7.post1`, `realesrgan`
-  (paint `image_super_utils`), `pytorch-lightning==1.9.5` (paint unet), rembg’s
-  ORT (`onnxruntime-gpu` on Windows, `onnxruntime` on Linux), and
-  `msvc-runtime` on Windows into `vendor/hunyuan3d-cuda/.venv`. A fresh
-  bootstrap no longer leaves those as a manual `uv pip install` into the lab
-  root `.venv`.
+  (paint `image_super_utils`), `pytorch-lightning==1.9.5` (paint unet),
+  `fast_simplification` (paint mesh simplify), rembg’s ORT
+  (`onnxruntime-gpu` on Windows, `onnxruntime` on Linux), and `msvc-runtime`
+  on Windows into `vendor/hunyuan3d-cuda/.venv`. A fresh bootstrap no longer
+  leaves those as a manual `uv pip install` into the lab root `.venv`.
 - **Hunyuan realesrgan / basicsr vs torchvision:** after installing realesrgan,
   bootstrap runs `patch_basicsr_functional_tensor.py` (point
   `rgb_to_grayscale` at `torchvision.transforms.functional`) and verifies

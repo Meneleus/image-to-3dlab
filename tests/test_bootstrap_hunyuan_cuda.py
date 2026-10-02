@@ -117,6 +117,7 @@ def test_runtime_packages_prefer_onnxruntime_gpu_on_windows(monkeypatch):
     assert "pymeshlab==2025.7.post1" in pkgs
     assert "realesrgan" in pkgs
     assert "pytorch-lightning==1.9.5" in pkgs
+    assert "fast_simplification" in pkgs
     assert "onnxruntime-gpu" in pkgs and "onnxruntime" not in pkgs
     assert "msvc-runtime" in pkgs
 
@@ -153,6 +154,7 @@ def test_pymeshlab_and_ort_install_into_the_vendor_venv(monkeypatch, tmp_path):
     assert "onnxruntime-gpu" in runtime[0]
     assert "realesrgan" in runtime[0]
     assert "pytorch-lightning==1.9.5" in runtime[0]
+    assert "fast_simplification" in runtime[0]
 
 
 def test_install_code_patches_mesh_utils_for_blender(monkeypatch, tmp_path):
