@@ -116,11 +116,12 @@ vendor\trellis2-cuda\.venv\Scripts\python.exe scripts\trellis_cuda_generate.py `
 
 What it does: clones `Tencent-Hunyuan/Hunyuan3D-2.1` → `vendor/hunyuan3d-cuda/`, builds
 the paint rasterizer (`custom_rasterizer`), fetches ~10 GB weights (asks first unless
-`--yes`). Runtime packages (including **pymeshlab**, which `hy3dshape` postprocess
-imports) go into **`vendor/hunyuan3d-cuda/.venv`**, not the lab root `.venv` — Generate
-3D uses that interpreter. On Windows it also installs `msvc-runtime` for pymeshlab’s
-DLLs, sets `DISTUTILS_USE_SDK=1` and the same C++20 / `/Zc:preprocessor` flags as
-TRELLIS, and patches the rasterizer for MSVC (`size_t`→`int64_t` shapes,
+`--yes`). Runtime packages go into **`vendor/hunyuan3d-cuda/.venv`**, not the lab root
+`.venv` — Generate 3D uses that interpreter. That includes **pymeshlab** (`hy3dshape`
+postprocess), **rembg**, and **`onnxruntime-gpu`** on Windows (plain `onnxruntime` on
+Linux) so rembg can import ORT. On Windows it also installs `msvc-runtime` for
+pymeshlab’s DLLs, sets `DISTUTILS_USE_SDK=1` and the same C++20 / `/Zc:preprocessor`
+flags as TRELLIS, and patches the rasterizer for MSVC (`size_t`→`int64_t` shapes,
 `long`→`int64_t` LibTorch `data_ptr`).
 
 **Shell:** CUDA extension builds need the MSVC + CUDA toolchains on PATH. A plain
@@ -251,7 +252,7 @@ Clear stale builds: delete `vendor\trellis2-cuda\.i2l-build\FlexGEMM` (or at lea
 | Hunyuan `custom_rasterizer`: VC env active but `DISTUTILS_USE_SDK` not set | Fixed: Hunyuan bootstrap uses the same Windows CUDA build env as TRELLIS (`DISTUTILS_USE_SDK=1`, `/Zc:preprocessor`). Pull latest and re-run from an x64 Native Tools shell. |
 | Hunyuan / TRELLIS: `nvcc fatal: A single input file is required` with `/Zc:` or `/std:c++20` on the nvcc line | Bare MSVC host flags reached nvcc. Pull latest (nvcc sanitizer wraps them as `-Xcompiler=…`; env no longer puts them in `CXXFLAGS`). Wipe the extension `build\` folder and re-run. |
 | Hunyuan `custom_rasterizer` MSVC `C2398` / `LNK2001` `data_ptr<long>` | Pull latest; bootstrap runs `patch_hunyuan_rasterizer_msvc_narrowing.py` (`size_t`→`int64_t` shapes, `long`→`int64_t` for LibTorch). Wipe `hy3dpaint\custom_rasterizer\build` and re-run from `VsDevCmd.bat -arch=amd64`. |
-| Hunyuan `No module named 'pymeshlab'` | Pull latest; re-run `scripts\bootstrap_hunyuan_cuda.py --yes --code-only`. It installs pymeshlab into `vendor\hunyuan3d-cuda\.venv`, which is the interpreter Generate 3D uses — not the lab root `.venv`. |
+| Hunyuan `No module named 'pymeshlab'` / `'onnxruntime'` | Pull latest; re-run `scripts\bootstrap_hunyuan_cuda.py --yes --code-only`. It installs pymeshlab + `onnxruntime-gpu` (Windows) into `vendor\hunyuan3d-cuda\.venv` — the interpreter Generate 3D uses, not the lab root `.venv`. |
 | rembg / Pixal `Conv_0` / cuDNN unavailable | rembg starts ONNX Runtime before torch, so `cudnn64_9.dll` in `.venv\Lib\site-packages\torch\lib` is missed (CUDA Toolkit 13.2 does not ship cuDNN 9). Pull latest: `matte.prepare_onnxruntime_cuda()` prepends that folder for **this process only** (`add_dll_directory` + PATH — not User PATH) and calls `onnxruntime.preload_dlls()` when present. Optional extra: `onnxruntime-gpu[cudnn]`. |
 | `cl` / `nvcc` not found in a plain Shell / agent session | Load the VS env first: `VsDevCmd.bat -arch=amd64` (or x64 Native Tools). Plain PowerShell has no `cl` on PATH. |
 | TRELLIS fails only on Windows | Microsoft tests Linux; try the same bootstrap on Linux NVIDIA, or WSL2 with GPU. |

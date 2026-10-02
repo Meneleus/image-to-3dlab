@@ -111,8 +111,23 @@ def test_patch_custom_rasterizer_msvc_narrowing_noop_off_windows(monkeypatch, tm
     boot.patch_custom_rasterizer_msvc_narrowing(tmp_path)
 
 
-def test_pymeshlab_is_installed_into_the_vendor_venv(monkeypatch, tmp_path):
-    """hy3dshape.postprocessors needs pymeshlab in vendor/hunyuan3d-cuda/.venv."""
+def test_runtime_packages_prefer_onnxruntime_gpu_on_windows(monkeypatch):
+    monkeypatch.setattr(boot.host, "os_family", lambda: "windows")
+    pkgs = boot.runtime_packages()
+    assert "pymeshlab==2025.7.post1" in pkgs
+    assert "onnxruntime-gpu" in pkgs and "onnxruntime" not in pkgs
+    assert "msvc-runtime" in pkgs
+
+
+def test_runtime_packages_use_cpu_onnxruntime_on_linux(monkeypatch):
+    monkeypatch.setattr(boot.host, "os_family", lambda: "linux")
+    pkgs = boot.runtime_packages()
+    assert "onnxruntime" in pkgs and "onnxruntime-gpu" not in pkgs
+    assert "msvc-runtime" not in pkgs
+
+
+def test_pymeshlab_and_ort_install_into_the_vendor_venv(monkeypatch, tmp_path):
+    """hy3dshape + rembg need these in vendor/hunyuan3d-cuda/.venv, not lab root."""
     assert any(p.startswith("pymeshlab") for p in boot.PIP_PACKAGES)
     monkeypatch.setattr(boot.host, "os_family", lambda: "windows")
     monkeypatch.setattr(boot.host, "driver_cuda_version", lambda: "13.0")
@@ -132,3 +147,4 @@ def test_pymeshlab_is_installed_into_the_vendor_venv(monkeypatch, tmp_path):
     assert runtime, seen
     assert "--python" in runtime[0] and str(vendor_py) in runtime[0]
     assert "msvc-runtime" in runtime[0]
+    assert "onnxruntime-gpu" in runtime[0]
