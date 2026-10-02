@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import os
+import sys
+import types
+from pathlib import Path
+
 import numpy as np
 from PIL import Image
 
@@ -76,3 +81,57 @@ def test_edge_cleaning_reaches_only_so_far():
 def test_the_lite_download_is_pinned_to_a_known_file():
     assert mt.LITE_URL.endswith("BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx")
     assert mt.LITE_BYTES == 224_005_088 and len(mt.LITE_MD5) == 32
+
+
+def test_prepare_onnxruntime_cuda_is_a_noop_off_windows(monkeypatch):
+    monkeypatch.setattr(mt.host, "os_family", lambda: "linux")
+    before = os.environ.get("PATH")
+    assert mt.prepare_onnxruntime_cuda() is None
+    assert os.environ.get("PATH") == before
+
+
+def test_prepare_onnxruntime_cuda_puts_torch_lib_on_the_process_path(monkeypatch, tmp_path):
+    """cudnn64_9.dll lives in torch\\lib; rembg/ORT must see it without a User PATH change."""
+    lib = tmp_path / "torch" / "lib"
+    lib.mkdir(parents=True)
+    (lib / "cudnn64_9.dll").write_bytes(b"")
+    monkeypatch.setattr(mt.host, "os_family", lambda: "windows")
+    monkeypatch.setattr(mt, "torch_lib_dir", lambda: lib)
+    mt._DLL_DIRS.clear()
+    monkeypatch.setenv("PATH", r"C:\Windows\system32")
+    added: list[str] = []
+    monkeypatch.setattr(mt.os, "add_dll_directory", lambda p: added.append(p), raising=False)
+    preloaded: list[str] = []
+    fake_ort = types.SimpleNamespace(preload_dlls=lambda directory=None: preloaded.append(directory))
+    monkeypatch.setitem(sys.modules, "onnxruntime", fake_ort)
+
+    out = mt.prepare_onnxruntime_cuda()
+    assert out == lib
+    assert os.environ["PATH"].split(os.pathsep)[0] == str(lib)
+    assert added == [str(lib)]
+    assert preloaded == [str(lib)]
+    # Idempotent: PATH is not doubled.
+    mt.prepare_onnxruntime_cuda()
+    assert os.environ["PATH"].count(str(lib)) == 1
+
+
+def test_new_session_prepares_ort_before_rembg(monkeypatch):
+    order: list[str] = []
+    monkeypatch.setattr(mt, "prepare_onnxruntime_cuda", lambda: order.append("prep"))
+    monkeypatch.setattr(mt, "matte_model", lambda: "u2net")
+
+    class FakeRembg:
+        @staticmethod
+        def new_session(model):
+            order.append(model)
+            return "session"
+
+    monkeypatch.setitem(sys.modules, "rembg", FakeRembg)
+    assert mt.new_session() == "session"
+    assert order == ["prep", "u2net"]
+
+
+def test_hunyuan_cuda_generate_prepares_ort_before_rembg():
+    source = Path(__file__).resolve().parents[1].joinpath(
+        "scripts", "hunyuan_cuda_generate.py").read_text()
+    assert source.index("prepare_onnxruntime_cuda") < source.index("BackgroundRemover")

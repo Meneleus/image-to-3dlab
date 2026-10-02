@@ -21,6 +21,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from image_to_3dlab.cuda_routes import HUNYUAN_CUDA
+from image_to_3dlab.matte import prepare_onnxruntime_cuda
 
 VENDOR = HUNYUAN_CUDA
 # Local layout written by bootstrap_hunyuan_cuda.py --weights
@@ -87,6 +88,9 @@ def main(argv: list[str] | None = None) -> int:
         apply_fix()
     except Exception:  # noqa: BLE001
         pass
+
+    # rembg/ORT CUDA EP needs cudnn64_9.dll from torch\\lib on Windows — before ORT loads.
+    prepare_onnxruntime_cuda()
 
     from PIL import Image
     from hy3dshape.rembg import BackgroundRemover

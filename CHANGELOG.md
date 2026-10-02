@@ -75,6 +75,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `msvc-runtime` on Windows) into `vendor/hunyuan3d-cuda/.venv`. `hy3dshape`
   postprocess imports it; a fresh bootstrap no longer leaves that as a
   manual `uv pip install`.
+- **Windows rembg / ONNX Runtime cuDNN:** `matte.prepare_onnxruntime_cuda()`
+  (Pixal `cut_out`, Hunyuan generate) prepends `torch\\lib` for this process
+  and calls `onnxruntime.preload_dlls()` so `cudnn64_9.dll` is found without
+  a User PATH change.
 
 ## [0.3.6] - 2026-10-01
 
