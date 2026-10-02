@@ -76,6 +76,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `msvc-runtime` on Windows into `vendor/hunyuan3d-cuda/.venv`. `hy3dshape`
   postprocess and rembg need those; a fresh bootstrap no longer leaves them
   as a manual `uv pip install` into the lab root `.venv`.
+- **Hunyuan paint without pip `bpy`:** `patch_hunyuan_mesh_utils_blender.py`
+  + `image_to_3dlab.obj_to_glb` convert OBJ→GLB via Finish’s `blender.exe` /
+  `I2L_BLENDER` (then bpy / trimesh). `hunyuan_cuda_generate.py --shape-only`
+  skips paint. DifferentiableRenderer still has no Windows
+  `mesh_inpaint_processor` build (documented).
 - **Windows rembg / ONNX Runtime cuDNN:** `matte.prepare_onnxruntime_cuda()`
   (Pixal `cut_out`, Hunyuan generate) prepends `torch\\lib` for this process
   and calls `onnxruntime.preload_dlls()` so `cudnn64_9.dll` is found without

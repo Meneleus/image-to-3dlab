@@ -133,6 +133,15 @@ def patch_custom_rasterizer_msvc_narrowing(raster: Path) -> None:
     run([sys.executable, str(script), "--root", str(raster)])
 
 
+def patch_mesh_utils_blender(diff: Path) -> None:
+    """Drop hard ``import bpy``; OBJ→GLB via blender.exe / I2L_BLENDER / trimesh."""
+    script = REPO / "scripts" / "patch_hunyuan_mesh_utils_blender.py"
+    if not (diff / "mesh_utils.py").is_file():
+        return
+    print(f"Patching mesh_utils for Blender.exe OBJ→GLB ({script.name})...", flush=True)
+    run([sys.executable, str(script), "--root", str(diff)])
+
+
 def install_cuda_extension(py: Path, target: Path, label: str) -> None:
     """Build + install a CUDA extension package (non-editable; Windows MSVC-safe)."""
     uv = shutil.which("uv")
@@ -184,7 +193,11 @@ def install_code(py: Path) -> None:
             raise SystemExit(f"custom_rasterizer failed to build.{tip}") from exc
 
     # DifferentiableRenderer: prefer setup.py / pip when present; else compile script.
+    # Upstream ships no Windows setup.py — only compile_mesh_painter.sh (Linux). Paint
+    # still imports mesh_utils; patch that before anyone hits ``import bpy``.
     diff = VENDOR / "hy3dpaint" / "DifferentiableRenderer"
+    if diff.is_dir():
+        patch_mesh_utils_blender(diff)
     setup = diff / "setup.py"
     if setup.is_file():
         try:
@@ -194,6 +207,13 @@ def install_code(py: Path) -> None:
     elif (diff / "compile_mesh_painter.sh").is_file() and host.os_family() != "windows":
         print("Compiling DifferentiableRenderer via shell script...", flush=True)
         run(["bash", "compile_mesh_painter.sh"], cwd=diff)
+    elif host.os_family() == "windows" and (diff / "mesh_inpaint_processor.cpp").is_file():
+        print(
+            "Note: DifferentiableRenderer has no Windows build for "
+            "mesh_inpaint_processor (Linux shell script only). Paint may fall "
+            "back without vertex inpaint — see docs/WINDOWS.md.",
+            flush=True,
+        )
 
     ckpt = VENDOR / "hy3dpaint" / "ckpt" / "RealESRGAN_x4plus.pth"
     if not ckpt.is_file():

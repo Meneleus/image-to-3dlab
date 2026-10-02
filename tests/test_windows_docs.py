@@ -27,7 +27,8 @@ def test_windows_guide_documents_trellis_cuda_compile_flags():
                    "-Xcompiler", "single input file",
                    "VsDevCmd.bat", "-arch=amd64", "data_ptr",
                    "patch_sf3d_windows_cuda_ext", "texture_baker", "C1189",
-                   "pymeshlab", "onnxruntime-gpu", "cudnn64_9", "preload_dlls"):
+                   "pymeshlab", "onnxruntime-gpu", "cudnn64_9", "preload_dlls",
+                   "No module named 'bpy'", "shape-only", "mesh_inpaint_processor"):
         assert needle in text, needle
 
 
