@@ -26,7 +26,8 @@ def test_windows_guide_documents_trellis_cuda_compile_flags():
                    "_i2l_ensure_msvc_cccl_flags", "custom_rasterizer",
                    "-Xcompiler", "single input file",
                    "VsDevCmd.bat", "-arch=amd64", "data_ptr",
-                   "patch_sf3d_windows_cuda_ext", "texture_baker", "C1189"):
+                   "patch_sf3d_windows_cuda_ext", "texture_baker", "C1189",
+                   "pymeshlab"):
         assert needle in text, needle
 
 

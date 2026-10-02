@@ -71,6 +71,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   MSVC-safe cxx flags and nvcc `/Zc:preprocessor` (CUDA 13 CCCL C1189). Install
   env gets the shared Windows CUDA build helpers; failure hints no longer blame
   missing Build Tools when `cl` is already on PATH.
+- **Hunyuan CUDA bootstrap** installs `pymeshlab==2025.7.post1` (and
+  `msvc-runtime` on Windows) into `vendor/hunyuan3d-cuda/.venv`. `hy3dshape`
+  postprocess imports it; a fresh bootstrap no longer leaves that as a
+  manual `uv pip install`.
 
 ## [0.3.6] - 2026-10-01
 

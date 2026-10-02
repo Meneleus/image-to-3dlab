@@ -50,15 +50,19 @@ REALESRGAN_URL = (
 
 # Curated: upstream requirements.txt pins deepspeed/bpy/tb_nightly which fight Windows
 # and the lab's own Blender install. Torch is installed separately from the CUDA index.
+# pymeshlab: hy3dshape.postprocessors imports it; upstream pins 2022.2.post3 (no
+# Windows py3.11 wheel). 2025.7.post1 is the wheel that works on REDFURY.
 PIP_PACKAGES = [
     "ninja", "pybind11",
     "transformers==4.46.0", "diffusers==0.30.0", "accelerate==1.1.1",
     "huggingface-hub==0.30.2", "safetensors==0.4.4",
     "numpy<2", "scipy", "einops", "pandas",
     "opencv-python", "imageio", "scikit-image", "rembg",
-    "trimesh", "pygltflib", "xatlas", "omegaconf", "pyyaml",
+    "trimesh", "pymeshlab==2025.7.post1", "pygltflib", "xatlas", "omegaconf", "pyyaml",
     "tqdm", "psutil", "timm", "torchmetrics", "pydantic",
 ]
+# pymeshlab's Windows wheels need the MSVC runtime DLLs beside the interpreter.
+WINDOWS_PIP_PACKAGES = ("msvc-runtime",)
 
 
 def announcement(code: bool = True, weights: bool = True) -> str:
@@ -145,7 +149,12 @@ def install_code(py: Path) -> None:
     print(f"Installing PyTorch with CUDA from {index}", flush=True)
     run([uv, "pip", "install", "--python", str(py), "--index-url", index,
          "torch", "torchvision"])
-    run([uv, "pip", "install", "--python", str(py), *PIP_PACKAGES])
+    packages = list(PIP_PACKAGES)
+    if host.os_family() == "windows":
+        packages.extend(WINDOWS_PIP_PACKAGES)
+    # `--python` is the Hunyuan vendor venv (vendor/hunyuan3d-cuda/.venv), not
+    # the lab root .venv — Generate 3D uses hunyuan_python() from that checkout.
+    run([uv, "pip", "install", "--python", str(py), *packages])
 
     if host.os_family() == "windows":
         print("\nPatching torch.utils.cpp_extension for C++20...", flush=True)

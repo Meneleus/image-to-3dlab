@@ -109,3 +109,26 @@ def test_patch_custom_rasterizer_msvc_narrowing_noop_off_windows(monkeypatch, tm
     monkeypatch.setattr(boot.host, "os_family", lambda: "linux")
     monkeypatch.setattr(boot, "run", lambda *a, **k: pytest.fail("should not run"))
     boot.patch_custom_rasterizer_msvc_narrowing(tmp_path)
+
+
+def test_pymeshlab_is_installed_into_the_vendor_venv(monkeypatch, tmp_path):
+    """hy3dshape.postprocessors needs pymeshlab in vendor/hunyuan3d-cuda/.venv."""
+    assert any(p.startswith("pymeshlab") for p in boot.PIP_PACKAGES)
+    monkeypatch.setattr(boot.host, "os_family", lambda: "windows")
+    monkeypatch.setattr(boot.host, "driver_cuda_version", lambda: "13.0")
+    monkeypatch.setattr(boot.host, "torch_cuda_index", lambda *_: "https://download.pytorch.org/whl/cu130")
+    monkeypatch.setattr(boot.shutil, "which", lambda _n: "/usr/bin/uv")
+    monkeypatch.setattr(boot.trellis_boot, "patch_torch_cpp_extension_cxx20", lambda *_: None)
+    monkeypatch.setattr(boot, "patch_custom_rasterizer_msvc_narrowing", lambda *_: None)
+    monkeypatch.setattr(boot, "install_cuda_extension", lambda *a, **k: None)
+    # No rasterizer / renderer dirs in tmp — skip those compile steps.
+    monkeypatch.setattr(boot, "VENDOR", tmp_path)
+    monkeypatch.setattr(boot.urllib.request, "urlretrieve", lambda *a, **k: None)
+    seen: list[list[str]] = []
+    monkeypatch.setattr(boot, "run", lambda cmd, **kw: seen.append(list(cmd)))
+    vendor_py = tmp_path / ".venv" / "Scripts" / "python.exe"
+    boot.install_code(vendor_py)
+    runtime = [c for c in seen if "pymeshlab==2025.7.post1" in c]
+    assert runtime, seen
+    assert "--python" in runtime[0] and str(vendor_py) in runtime[0]
+    assert "msvc-runtime" in runtime[0]
