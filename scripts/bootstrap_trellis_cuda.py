@@ -28,7 +28,6 @@ the first generation run, same as the Mac bootstrap. BRIA RMBG-2.0 is never inst
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import shutil
 import subprocess
@@ -40,6 +39,10 @@ sys.path.insert(0, str(REPO))
 
 from image_to_3dlab import host
 from image_to_3dlab.cuda_routes import TRELLIS_CUDA, venv_python
+from image_to_3dlab.windows_cuda_build import (
+    extension_build_env,
+    windows_cuda_build_env,  # noqa: F401 — re-exported for tests
+)
 
 UPSTREAM = "https://github.com/microsoft/TRELLIS.2.git"
 VENDOR = TRELLIS_CUDA
@@ -68,11 +71,8 @@ BASIC = [
 #   3) Stale build/ ninja files from a previous failed compile
 # Putting /std:c++20 in CL *and* on the command line causes D9025 flip-flops under
 # nvcc --use-local-env. So env carries only Zc flags; std comes from setup.py + torch.
-WIN_CL_FLAGS = "/Zc:preprocessor /Zc:__cplusplus"
-WIN_NVCC_FLAGS = (
-    "-allow-unsupported-compiler "
-    "-Xcompiler=/Zc:preprocessor -Xcompiler=/Zc:__cplusplus"
-)
+# WIN_CL_FLAGS / WIN_NVCC_FLAGS / windows_cuda_build_env live in
+# image_to_3dlab.windows_cuda_build (shared with Hunyuan).
 WIN_SETUP_MARKER = "# image-to-3dlab: windows cxx20 + Zc:preprocessor\n"
 WIN_HOOK_BEGIN = "# --- image-to-3dlab: force C++20 on cl/nvcc (begin) ---\n"
 WIN_HOOK_END = "# --- image-to-3dlab: force C++20 on cl/nvcc (end) ---\n"
@@ -230,25 +230,6 @@ def announcement() -> str:
         ]
     lines.append("")
     return "\n".join(lines)
-
-
-def windows_cuda_build_env(base: dict[str, str] | None = None) -> dict[str, str]:
-    """Env for building CUDA extensions on Windows with CUDA 12.8+/13.x + MSVC.
-
-    Sets DISTUTILS_USE_SDK and /Zc:preprocessor. Does *not* put /std:c++20 in CL —
-    that races with torch/setup.py under nvcc --use-local-env (cl D9025 flip-flops).
-    No-op on non-Windows hosts.
-    """
-    env = dict(base if base is not None else os.environ)
-    if host.os_family() != "windows":
-        return env
-    env["DISTUTILS_USE_SDK"] = "1"
-    # Strip any user-exported /std: from CL/CXXFLAGS so only one standard remains.
-    env["CL"] = WIN_CL_FLAGS
-    env["CXXFLAGS"] = WIN_CL_FLAGS
-    env["NVCC_FLAGS"] = WIN_NVCC_FLAGS
-    env["NVCC_PREPEND_FLAGS"] = WIN_NVCC_FLAGS
-    return env
 
 
 def setup_text_outside_hook(text: str) -> str:
@@ -641,17 +622,6 @@ def clean_extension_build_artifacts(target: Path) -> None:
         print(f"Removed {path}", flush=True)
     if not removed:
         print(f"No stale build artifacts under {target}", flush=True)
-
-
-def extension_build_env() -> dict[str, str]:
-    """Full env for a pip install of a CUDA extension (PATH/CUDA_HOME + Windows flags)."""
-    env = windows_cuda_build_env()
-    nvcc = host.find_nvcc()
-    if nvcc:
-        env["PATH"] = os.pathsep.join([str(Path(nvcc).parent), env.get("PATH", "")])
-        env.setdefault("CUDA_HOME", str(Path(nvcc).parent.parent))
-        env.setdefault("CUDA_PATH", str(Path(nvcc).parent.parent))
-    return env
 
 
 def run(cmd: list[str], *, cwd: Path | None = None, env: dict | None = None) -> None:

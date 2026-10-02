@@ -115,7 +115,10 @@ vendor\trellis2-cuda\.venv\Scripts\python.exe scripts\trellis_cuda_generate.py `
 ```
 
 What it does: clones `Tencent-Hunyuan/Hunyuan3D-2.1` → `vendor/hunyuan3d-cuda/`, builds
-the paint rasterizer, fetches ~10 GB weights (asks first unless `--yes`).
+the paint rasterizer (`custom_rasterizer`), fetches ~10 GB weights (asks first unless
+`--yes`). On Windows it sets `DISTUTILS_USE_SDK=1` and the same C++20 /
+`/Zc:preprocessor` flags as TRELLIS (required when an x64 Native Tools shell is
+already active — otherwise torch refuses the CUDA extension build).
 
 **Licence:** Tencent Community License — not for EU / UK / South Korea.
 
@@ -203,6 +206,7 @@ Clear stale builds: delete `vendor\trellis2-cuda\.i2l-build\FlexGEMM` (or at lea
 | Bootstrap says nvdiffrast is missing `/Zc:preprocessor` after “Patched…” | Fixed: pull latest (CCCL ensure hook). Delete `vendor\trellis2-cuda\.i2l-build\nvdiffrast` and re-run. |
 | o-voxel MSVC `C2398` / `C3688` (`…d` float suffix) / `C4838` | Pull latest; bootstrap runs `patch_ovoxel_msvc_narrowing.py`. Wipe `vendor\trellis2-cuda\o-voxel\build` and re-run. |
 | flash-attn fails with `No module named 'psutil'` | Fixed: bootstrap installs `psutil` into the TRELLIS venv before the optional flash-attn build (`--no-build-isolation`). Still soft-fails to SDPA if the CUDA extension itself will not compile. Re-run bootstrap (or just let it retry the flash-attn step). |
+| Hunyuan `custom_rasterizer`: VC env active but `DISTUTILS_USE_SDK` not set | Fixed: Hunyuan bootstrap uses the same Windows CUDA build env as TRELLIS (`DISTUTILS_USE_SDK=1`, `/Zc:preprocessor`). Pull latest and re-run from an x64 Native Tools shell. |
 | TRELLIS fails only on Windows | Microsoft tests Linux; try the same bootstrap on Linux NVIDIA, or WSL2 with GPU. |
 | Generate Image is very slow / CPU | `nvidia-smi` must see the card; update the driver and reopen the terminal. |
 | Finish cannot find Blender | Install from blender.org, or set `I2L_BLENDER`. |

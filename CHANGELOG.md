@@ -48,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it at build time but does not declare it; without this Windows hits
   `ModuleNotFoundError: psutil`. Still soft-fails to SDPA if the extension
   itself fails to compile.
+- **Hunyuan CUDA bootstrap on Windows:** set `DISTUTILS_USE_SDK=1` and the shared
+  C++20 / `/Zc:preprocessor` build env (same helpers as TRELLIS) before building
+  `custom_rasterizer` / DifferentiableRenderer; non-editable install. Fixes torch
+  refusing the build when a Visual C++ environment is already activated.
 
 ## [0.3.6] - 2026-10-01
 

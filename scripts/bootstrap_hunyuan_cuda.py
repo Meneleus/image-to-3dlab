@@ -6,6 +6,11 @@ creates a Python 3.11 venv with CUDA PyTorch, installs a curated requirements se
 (skipping deepspeed/bpy which break plain Windows installs), builds the custom
 rasterizer, and optionally downloads the ~10 GB shape+paint weights.
 
+On Windows, CUDA extension installs reuse the same MSVC gate as TRELLIS:
+``DISTUTILS_USE_SDK=1``, ``/Zc:preprocessor``, and the C++20 setup.py hook —
+needed when the x64 Native Tools shell is already active (torch otherwise
+refuses the build).
+
 `AGENTS.md`: name the backend, route and size, and require a yes (or `--yes`).
 
     python scripts/bootstrap_hunyuan_cuda.py
@@ -17,7 +22,6 @@ rasterizer, and optionally downloads the ~10 GB shape+paint weights.
 from __future__ import annotations
 
 import argparse
-import os
 import shutil
 import subprocess
 import sys
@@ -26,9 +30,14 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
+# TRELLIS bootstrap owns the setup.py C++20 / CCCL rewrite helpers we reuse.
+sys.path.insert(0, str(REPO / "scripts"))
+
+import bootstrap_trellis_cuda as trellis_boot
 
 from image_to_3dlab import host
 from image_to_3dlab.cuda_routes import HUNYUAN_CUDA, venv_python
+from image_to_3dlab.windows_cuda_build import extension_build_env
 
 UPSTREAM = "https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1.git"
 VENDOR = HUNYUAN_CUDA
@@ -98,6 +107,24 @@ def ensure_venv() -> Path:
     return py
 
 
+def install_cuda_extension(py: Path, target: Path, label: str) -> None:
+    """Build + install a CUDA extension package (non-editable; Windows MSVC-safe)."""
+    uv = shutil.which("uv")
+    setup_py = target / "setup.py"
+    if setup_py.is_file():
+        trellis_boot.ensure_windows_extension_setup(setup_py)
+        trellis_boot.clean_extension_build_artifacts(target)
+    env = extension_build_env()
+    print(f"Building {label}...", flush=True)
+    # Non-editable: same shape as TRELLIS extensions. Editable is fragile on MSVC
+    # and unnecessary — generate uses the package installed into this Hunyuan venv.
+    run(
+        [uv, "pip", "install", "--python", str(py), "--no-build-isolation",
+         "--force-reinstall", "--no-deps", str(target)],
+        env=env,
+    )
+
+
 def install_code(py: Path) -> None:
     uv = shutil.which("uv")
     index = host.torch_cuda_index(host.driver_cuda_version())
@@ -111,31 +138,30 @@ def install_code(py: Path) -> None:
          "torch", "torchvision"])
     run([uv, "pip", "install", "--python", str(py), *PIP_PACKAGES])
 
+    if host.os_family() == "windows":
+        print("\nPatching torch.utils.cpp_extension for C++20...", flush=True)
+        trellis_boot.patch_torch_cpp_extension_cxx20(py)
+
     raster = VENDOR / "hy3dpaint" / "custom_rasterizer"
     if raster.is_dir():
-        print("Building custom_rasterizer...", flush=True)
-        env = dict(os.environ)
-        nvcc = host.find_nvcc()
-        if nvcc:
-            env["PATH"] = os.pathsep.join([str(Path(nvcc).parent), env.get("PATH", "")])
-            env.setdefault("CUDA_HOME", str(Path(nvcc).parent.parent))
         try:
-            run([uv, "pip", "install", "--python", str(py), "--no-build-isolation",
-                 "-e", str(raster)], env=env)
+            install_cuda_extension(py, raster, "custom_rasterizer")
         except subprocess.CalledProcessError as exc:
             tip = ""
             if host.os_family() == "windows":
                 tip = (" Install Visual Studio Build Tools with C++, and a CUDA toolkit "
-                       "matching PyTorch. See docs/WINDOWS.md.")
+                       "matching PyTorch. Open an x64 Native Tools shell, then re-run. "
+                       "See docs/WINDOWS.md.")
             raise SystemExit(f"custom_rasterizer failed to build.{tip}") from exc
 
     # DifferentiableRenderer: prefer setup.py / pip when present; else compile script.
     diff = VENDOR / "hy3dpaint" / "DifferentiableRenderer"
     setup = diff / "setup.py"
     if setup.is_file():
-        print("Building DifferentiableRenderer...", flush=True)
-        run([uv, "pip", "install", "--python", str(py), "--no-build-isolation",
-             "-e", str(diff)])
+        try:
+            install_cuda_extension(py, diff, "DifferentiableRenderer")
+        except subprocess.CalledProcessError as exc:
+            raise SystemExit(f"DifferentiableRenderer failed to build: {exc}") from exc
     elif (diff / "compile_mesh_painter.sh").is_file() and host.os_family() != "windows":
         print("Compiling DifferentiableRenderer via shell script...", flush=True)
         run(["bash", "compile_mesh_painter.sh"], cwd=diff)
